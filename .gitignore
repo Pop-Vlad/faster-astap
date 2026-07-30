@@ -1,0 +1,7 @@
+build/
+*.o
+*.a
+*.ini
+*.wcs
+*.log
+.idea/
