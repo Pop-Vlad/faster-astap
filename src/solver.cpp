@@ -250,6 +250,14 @@ namespace astap {
   }
 
   void Solver::prepare_workers() {
+    if (!quad_builder_) {
+      if (settings_.use_gpu) quad_builder_ = make_sycl_quad_builder();
+      if (!quad_builder_)
+        quad_builder_ = make_cpu_quad_builder();
+      else
+        say("Quad construction on " + quad_builder_->backend());
+    }
+
     const size_t want = std::max<size_t>(1, thread_count());
     while (workers_.size() < want)
       workers_.push_back(std::unique_ptr<SearchWorker>(new SearchWorker()));
@@ -709,54 +717,69 @@ namespace astap {
 
           std::vector<char> solved(batch.size(), 0);
           std::vector<char> db_failed(batch.size(), 0);
+          batch_stars_.resize(batch.size());
+          batch_quads_.resize(batch.size());
 
+          // Phase 1: read the database stars for every position of the batch.
+          const auto t_read0 = std::chrono::steady_clock::now();
           parallel_for(0, batch.size(), [&](size_t k, unsigned t) {
             const SpiralPos &p = batch[k];
-            if (!p.worth_evaluating) return;
-            SearchWorker &w = *workers_[t];
-            auto tick = std::chrono::steady_clock::now();
-            auto lap = [&tick] {
-              const auto now = std::chrono::steady_clock::now();
-              const double d = std::chrono::duration<double>(now - tick).count();
-              tick = now;
-              return d;
-            };
-
-            if (!read_stars(w.database, p.ra_database, p.dec_database, search_field * oversize2,
-                            nrstars_required2, w.starlist, w.mag2)) {
-              db_failed[k] = 1;
+            RowList &stars = batch_stars_[k];
+            if (!p.worth_evaluating) {
+              stars.resize(2, 0);
               return;
             }
-            w.t_read += lap();
+            SearchWorker &w = *workers_[t];
+
+            if (!read_stars(w.database, p.ra_database, p.dec_database, search_field * oversize2,
+                            nrstars_required2, stars, w.mag2)) {
+              db_failed[k] = 1;
+              stars.resize(2, 0);
+              return;
+            }
 
             if (match_nr == 1) {
               // A first solution was found: keep only the stars visible in the
               // image, so that stars outside the image boundaries are not used to
               // create database quads.
               size_t nstars_visible = 0;
-              for (size_t i = 0; i < w.starlist.count(); i++) {
+              for (size_t i = 0; i < stars.count(); i++) {
                 double xi, yi;
-                rotate(crota2_rad, w.starlist(0, i) / cdelt1_arcsec,
-                       w.starlist(1, i) / cdelt2_arcsec, xi, yi); // rotate to screen orientation
+                rotate(crota2_rad, stars(0, i) / cdelt1_arcsec, stars(1, i) / cdelt2_arcsec, xi,
+                       yi); // rotate to screen orientation
                 xi = centerX - xi;
                 yi = centerY - yi;
                 if (xi > 0 && xi < width2 && yi > 0 && yi < height2) {
-                  w.starlist(0, nstars_visible) = w.starlist(0, i);
-                  w.starlist(1, nstars_visible) = w.starlist(1, i);
+                  stars(0, nstars_visible) = stars(0, i);
+                  stars(1, nstars_visible) = stars(1, i);
                   nstars_visible++;
                 }
               }
-              w.starlist.resize(2, nstars_visible);
+              stars.resize(2, nstars_visible);
             }
+          });
+          const auto t_quad0 = std::chrono::steady_clock::now();
+          timing_.read_stars_cpu += std::chrono::duration<double>(t_quad0 - t_read0).count();
 
-            find_quads(nrstars_image, w.starlist, w.match.quad_star_distances1);
-            w.t_quads += lap();
+          // Phase 2: build the database quads for the whole batch. This is the
+          // one call an accelerator can take over.
+          quad_builder_->build(nrstars_image, batch_stars_, batch_quads_);
 
+          const auto t_match0 = std::chrono::steady_clock::now();
+          timing_.quads_cpu += std::chrono::duration<double>(t_match0 - t_quad0).count();
+
+          // Phase 3: match each position against the image quads.
+          parallel_for(0, batch.size(), [&](size_t k, unsigned t) {
+            if (!batch[k].worth_evaluating || db_failed[k]) return;
+            SearchWorker &w = *workers_[t];
+            w.match.quad_star_distances1.swap(batch_quads_[k]);
             solved[k] = find_offset_and_rotation(w.match, minimum_quads, quad_tolerance, nullptr)
                           ? 1
                           : 0;
-            w.t_match += lap();
+            w.match.quad_star_distances1.swap(batch_quads_[k]);
           });
+          timing_.match_cpu +=
+              std::chrono::duration<double>(std::chrono::steady_clock::now() - t_match0).count();
 
           for (size_t k = 0; k < batch.size(); k++) {
             if (db_failed[k]) {
@@ -872,13 +895,7 @@ namespace astap {
       // Loop for autoFOV from 9.5 down to 0.37 degrees.
     } while (!(!autoFOV || solution || fov2 <= fov_min));
 
-    for (const auto& w : workers_) {
-    timing_.read_stars_cpu += w->t_read;
-    timing_.quads_cpu += w->t_quads;
-    timing_.match_cpu += w->t_match;
-  }
-
-  const auto elapsed = std::chrono::steady_clock::now() - startTick;
+    const auto elapsed = std::chrono::steady_clock::now() - startTick;
     solved_seconds_ =
         std::round(std::chrono::duration<double>(elapsed).count() * 10) / 10;
 

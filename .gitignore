@@ -5,3 +5,5 @@ build/
 *.wcs
 *.log
 .idea/
+build-acpp
+build-sycl

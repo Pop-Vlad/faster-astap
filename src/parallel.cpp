@@ -61,8 +61,7 @@ namespace astap {
           next_ = 1; // chunk 0 runs on the calling thread
           done_ = 0;
           busy_ = true;
-          generation_++;
-        }
+            }
         cv_work_.notify_all();
 
         body(0); // the caller takes the first chunk
@@ -90,8 +89,7 @@ namespace astap {
         {
           std::lock_guard<std::mutex> lk(m_);
           stop_ = true;
-          generation_++;
-        }
+            }
         cv_work_.notify_all();
         for (std::thread &t: pool_) t.join();
       }
@@ -107,42 +105,36 @@ namespace astap {
       }
 
       void worker_loop() {
-        uint64_t seen = 0;
-        for (;;) {
-          const std::function<void(unsigned)> *body;
-          {
-            std::unique_lock<std::mutex> lk(m_);
-            cv_work_.wait(lk, [&] { return stop_ || (generation_ != seen && busy_); });
-            if (stop_) return;
-            seen = generation_;
-            body = body_;
-          }
-          for (;;) {
-            unsigned mine;
-            {
-              std::lock_guard<std::mutex> lk(m_);
-              if (!busy_ || next_ >= chunks_) break;
-              mine = next_++;
-            }
-            (*body)(mine);
-            {
-              std::lock_guard<std::mutex> lk(m_);
-              done_++;
-            }
-            cv_done_.notify_one();
-          }
-          cv_done_.notify_one();
+      for (;;) {
+        unsigned mine;
+        const std::function<void(unsigned)> *body;
+        {
+          std::unique_lock<std::mutex> lk(m_);
+          cv_work_.wait(lk, [this] { return stop_ || (busy_ && next_ < chunks_); });
+          if (stop_) return;
+          // The task pointer is read under the same lock that hands out the
+          // chunk. Caching it across iterations would be a use after return:
+          // it points at the caller's stack, and the caller may already have
+          // returned and started the next batch.
+          mine = next_++;
+          body = body_;
         }
+        (*body)(mine);
+        {
+          std::lock_guard<std::mutex> lk(m_);
+          done_++;
+        }
+        cv_done_.notify_one();
       }
+    }
 
-      std::vector<std::thread> pool_;
+    std::vector<std::thread> pool_;
       unsigned workers_ = 0;
       std::mutex m_;
       std::condition_variable cv_work_, cv_done_;
       const std::function<void(unsigned)> *body_ = nullptr;
       unsigned chunks_ = 0, next_ = 0, done_ = 0;
-      uint64_t generation_ = 0;
-      bool busy_ = false, stop_ = false;
+        bool busy_ = false, stop_ = false;
     };
   } // namespace
 

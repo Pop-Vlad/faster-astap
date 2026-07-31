@@ -10,6 +10,7 @@
 
 #pragma once
 
+#include <algorithm>
 #include <cstddef>
 #include <cstdint>
 #include <string>
@@ -82,6 +83,11 @@ namespace astap {
 
     std::vector<double> &operator[](int r) { return rows_[static_cast<size_t>(r)]; }
     const std::vector<double> &operator[](int r) const { return rows_[static_cast<size_t>(r)]; }
+
+    void swap(RowList &o) {
+      rows_.swap(o.rows_);
+      std::swap(count_, o.count_);
+    }
 
     double *data(int r) { return rows_[static_cast<size_t>(r)].data(); }
     const double *data(int r) const { return rows_[static_cast<size_t>(r)].data(); }

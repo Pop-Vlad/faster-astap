@@ -30,6 +30,7 @@
 #include <vector>
 
 #include "astap/matching.h"
+#include "astap/quad_batch.h"
 #include "astap/star_database.h"
 #include "astap/star_detection.h"
 #include "astap/types.h"
@@ -49,6 +50,7 @@ namespace astap {
     bool check_pattern_filter = false; // normalise the bayer pattern of raw OSC images
     bool add_sip = false; // add SIP distortion coefficients
     bool show_log = false; // log every search step
+    bool use_gpu = false;  // offload quad construction to a SYCL device when available
   };
 
   class Solver {
@@ -83,15 +85,15 @@ namespace astap {
     double search_offset() const { return sep_search_; } // radians
     double magnitude_limit() const { return mag2_ / 10; }
 
-    // Where the time went. The three `_cpu` entries are summed over all worker
-    // threads, so they exceed the wall clock; the two `_wall` entries do not
-    // overlap and do add up to the run time.
+    // Where the time went. All entries are wall clock. The three phase entries
+    // are the parts of `spiral_wall`, which together with `image_wall` accounts
+    // for the run time.
     struct Timing {
-      double image_wall = 0;     // binning, background and star detection, per FOV attempt
-      double spiral_wall = 0;    // the whole squared spiral search
-      double read_stars_cpu = 0; // star database I/O and record decoding
-      double quads_cpu = 0;      // database quad construction
-      double match_cpu = 0;      // hash matching and the least squares fit
+      double image_wall = 0;      // binning, background and star detection, per FOV attempt
+      double spiral_wall = 0;     // the whole squared spiral search
+      double read_stars_cpu = 0;  // phase 1: star database I/O and record decoding
+      double quads_cpu = 0;       // phase 2: database quad construction
+      double match_cpu = 0;       // phase 3: hash matching and the least squares fit
     };
 
     const Timing &timing() const { return timing_; }
@@ -127,7 +129,6 @@ namespace astap {
     struct SearchWorker {
       StarDatabase database;
       MatchState match;
-      double t_read = 0, t_quads = 0, t_match = 0;  // CPU time, this worker only
       RowList starlist;
       double mag2 = 0;
     };
@@ -146,6 +147,10 @@ namespace astap {
     // unique_ptr because a worker holds an ifstream, which is not movable in a
     // way that survives vector growth on every standard library.
     std::vector<std::unique_ptr<SearchWorker> > workers_;
+    std::unique_ptr<QuadBatchBuilder> quad_builder_;
+    // Per position storage for one batch, reused across batches.
+    std::vector<RowList> batch_stars_;
+    std::vector<RowList> batch_quads_;
     MatchState match_;
     Histogram histogram_;
     SipCoefficients sip_;

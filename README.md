@@ -60,6 +60,37 @@ No dependencies beyond the standard library. Do not enable `-ffast-math`: the
 port relies on IEEE-754 semantics and on the default round-half-to-even mode,
 which is what FPC's `Round()` uses.
 
+### Optional SYCL offload
+
+Quad construction can run on a SYCL device. The backend is written in plain
+SYCL 2020 with no vendor extensions, so it builds under either toolchain:
+
+```sh
+# oneAPI / DPC++
+source /opt/intel/oneapi/setvars.sh
+cmake -S . -B build-sycl -DASTAP_SYCL=ON -DCMAKE_CXX_COMPILER=icpx
+cmake --build build-sycl -j
+./build-sycl/astap_solve -f image.fits -gpu ...
+
+# AdaptiveCpp
+cmake -S . -B build-sycl -DASTAP_SYCL=ON -DAdaptiveCpp_DIR=/path/to/adaptivecpp/lib/cmake/AdaptiveCpp
+```
+
+`-gpu` selects the SYCL builder and falls back to the CPU one when no suitable
+device is present, so the flag is always safe to pass. `ASTAP_SYCL_TARGETS` maps
+to `-fsycl-targets`, e.g. `nvptx64-nvidia-cuda`.
+
+Two flags matter for correctness. `icpx` defaults to `-fp-model=fast`, which
+reassociates and uses reduced precision math; the build pins
+`-fp-model=precise -ffp-contract=off` so that neither host nor device may fuse
+`a*b+c` into an FMA and change the last bit. Without them the offloaded quads
+differ from the reference in about 17% of their values.
+
+`quad_batch_tests` is the gate: it compares whichever builder is available
+against `find_quads()` value by value with `memcmp`, across every group size the
+solver uses. A full blind solve through the SYCL path produces a solution
+identical to the plain build.
+
 ## Usage
 
 ```
