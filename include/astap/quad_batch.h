@@ -28,6 +28,12 @@ namespace astap {
 
     // Short name for logging, e.g. "cpu" or "sycl:NVIDIA GeForce RTX 3090".
     virtual std::string backend() const = 0;
+
+    // How many positions this builder would like per call. 0 means it has no
+    // preference and the caller's default applies. An accelerator wants a large
+    // batch so the kernels dominate the launch and transfer cost; the CPU does
+    // not care, and a smaller batch keeps the search's early exit cheap.
+    virtual size_t preferred_batch() const { return 0; }
   };
 
   // Always available. Runs find_quads over the batch on the thread pool.

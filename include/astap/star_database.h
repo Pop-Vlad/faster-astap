@@ -38,6 +38,7 @@ namespace astap {
 
     int database_type() const { return database_type_; }
     const std::string &name() const { return name_database_; }
+    const std::string &path() const { return database_path_; }
 
     // Adopt an already made selection, so several reader instances can share one
     // choice while keeping their own file handle and cache.

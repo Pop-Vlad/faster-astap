@@ -692,7 +692,9 @@ namespace astap {
         // of the sequential search: it stops at the first solving position, and
         // batches are generated in spiral order.
         prepare_workers();
-        const size_t max_batch = std::max<size_t>(1, workers_.size() * 4);
+        const size_t want = quad_builder_->preferred_batch();
+      const size_t max_batch =
+          want ? want : std::max<size_t>(1, workers_.size() * 4);
         // Start with a single position and grow. Most solves with a hint succeed
         // on the very first position, and there is no reason to pay for a
         // parallel batch and its synchronisation to find that out.

@@ -51,6 +51,8 @@ add_library(astap_solver
         src/astro_math.cpp
         src/parallel.cpp
   src/quad_batch.cpp
+        src/quad_index.cpp
+        src/index_solver.cpp
         src/calc_trans_cubic.cpp
         src/fits.cpp
         src/matching.cpp
@@ -96,6 +98,9 @@ enable_testing()
 add_executable(solver_tests tests/solver_tests.cpp)
 target_link_libraries(solver_tests PRIVATE astap_solver)
 add_test(NAME solver_tests COMMAND solver_tests)
+
+add_executable(quad_index_bench tests/quad_index_bench.cpp)
+target_link_libraries(quad_index_bench PRIVATE astap_solver)
 
 add_executable(quad_batch_tests tests/quad_batch_tests.cpp)
 target_link_libraries(quad_batch_tests PRIVATE astap_solver)
