@@ -10,8 +10,11 @@ build:
 
 | | |
 | --- | --- |
-| **`astap_solve`** | The faithful port. Reproduces `astap_cli`'s answer **bit for bit**, 8x faster. Use it when you need the reference result, or SIP distortion coefficients. |
+| **`astap_solve`** | The faithful port. Reproduces `astap_cli`'s answer **bit for bit**, 8x faster. Use it when you need the reference result. |
 | **`astap_index_solve`** | The index solver. Replaces the sky search with a pre-built whole-sky quad index, so a solve is milliseconds and does not depend on knowing where the telescope was pointed. Use it for throughput, blind solves, and wide fields. |
+
+`astap_solve` is the one to reach for when you need the reference answer
+digit for digit; `astap_index_solve` does everything else faster.
 
 Both read the same star databases as the original, take the same options, and
 write the same `.ini` and `.wcs` files, so either can stand in for `astap_cli`.
@@ -51,9 +54,8 @@ Images must be uncompressed FITS. For PNG/TIFF/JPEG use
 
 ## Performance
 
-Measured on a 13600K (14 cores / 20 threads) with an RTX 3090, solving the
-6020×4015 sample in this directory against the D80 database. Best of three runs
-with a warm page cache.
+Measured on a 13600K (14 cores / 20 threads) with an RTX 3090, solving a
+6020×4015 frame against the D80 database. Best of three runs with a warm page cache.
 
 "Blind" starts the search **90° from the true position** — a deliberately
 average blind solve, since a start position that happens to be close flatters
@@ -101,7 +103,7 @@ wraparound, with ground truth taken from each file's own WCS:
 | `astap_solve` solved | 28/40 |
 | `astap_index_solve` solved | **40/40** |
 | images the port solves that the index misses | **0** |
-| position error against the sky | median 0.21 px, worst 2.2 px |
+| position error against the sky | median 0.15 px, worst 2.2 px |
 
 The twelve extra are the 5° and 10° fields, where the spiral's auto-FOV sweep
 gives up. `tools/corpus_harness.cpp` runs both solvers and exits non-zero if the
@@ -159,6 +161,8 @@ astap_index_solve -f image.fits [options] [more.fits ...]
 -m   minimum_star_size["]                  default 1.5, applied only with -fov
 -z   downsample_factor[0,1,2,3,4,…]        0 = auto
 -o   base path & file name for the output files
+-sip      add SIP distortion coefficients (written to the .wcs file)
+-norefine skip the second pass, leaving the raw index solution
 -wcs / -log / -progress / -threads N       as above
 
 -i        index cache file, overriding the default location
@@ -211,6 +215,27 @@ since those rungs are tiny and are exactly what lets it solve 5-10° fields.
 Changing `-tiers` invalidates the cache, so the next run rebuilds it (2.3 s
 here).
 
+#### The second pass against the database, and SIP
+
+Once the field is known, the solver reads the star database *once* at that
+position — at a depth matched to the image's own star count, over a square large
+enough to take in the whole frame — and redoes the match there. This is the same
+work the spiral does at each of its many positions, done once at the right one.
+
+End to end, including rebuilding the image quads, the match and the cubic fits.
+It costs around 0.5ms. Against a 5 ms solve that is ~18%. `-progress` reports it per image.
+
+It buys two things. Accuracy, because the index's own fit rests on quad centres
+alone: over the corpus the median error drops from 0.214 px to 0.145 px, and the
+worst individual gains are large (a 10° field went from 0.67 px to 0.07 px). And
+SIP, because a cubic distortion fit needs at least twenty matched quads, which
+the raw index consensus reaches on 13 of 40 corpus images and the second pass
+lifts to 19.
+
+`-norefine` turns it off. `-sip` adds the coefficients, which go to the `.wcs`
+file (the `.ini` format has no place for them) and set `CTYPE1/2` to
+`RA---TAN-SIP`. When there are too few quads the solver says so and writes a linear WCS.
+
 #### Why it solves wide fields the port cannot
 
 Quads are normally built from each star's three nearest neighbours, one per star.
@@ -223,7 +248,7 @@ redundancy to absorb that.
 So when the ordinary pass finds nothing, the solver rebuilds the quads from every
 combination of each star's six nearest — 15 per star, 1024 quads on that field
 instead of 76, which took its true matches from 3 to 15. It is a strict superset,
-so it can only add matches; it runs as a second pass purely because it costs
+so it can only add matches; it is held back as a retry purely because it costs
 fifteen times the index queries. Three of the 40 corpus images need it, all at
 1-8 stars/deg² and 5-10°.
 

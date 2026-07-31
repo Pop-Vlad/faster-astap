@@ -7,6 +7,7 @@
 #include <vector>
 
 #include "astap/astro_math.h"
+#include "astap/calc_trans_cubic.h"
 #include "astap/matching.h"
 #include "astap/quads.h"
 
@@ -268,6 +269,7 @@ namespace astap {
   IndexSolveResult solve_with_index(const QuadIndex &index, const RowList &image_quads, int width,
                                     int height, const IndexSolveSettings &s) {
     IndexSolveResult out;
+    out.quad_tolerance_used = index.settings().quad_tolerance;
     if (image_quads.count() == 0 || index.size() == 0) {
       out.reason = "no quads";
       return out;
@@ -451,6 +453,7 @@ namespace astap {
       tried++;
       IndexSolveResult r = solve_with_index(tiers[i], image_quads, width, height, s);
       r.tier_density = tiers[i].settings().star_density;
+      r.quad_tolerance_used = tiers[i].settings().quad_tolerance;
       if (r.solved && r.nr_inliers > best.nr_inliers) {
         best = r;
         // A consensus this strong is not a coincidence, and the remaining tiers
@@ -501,5 +504,172 @@ namespace astap {
     r.solved = false;
     r.reason = "no depth tier solved this image";
     return r;
+  }
+
+  namespace {
+    // Reads the brightest `want` database stars over a field about (ra, dec) and
+    // projects them into standard coordinates about that point. This is
+    // Solver::read_stars: the field straddles up to four tiles, and each
+    // contributes its share of the total.
+    bool read_stars_at(StarDatabase &db, double ra, double dec, double field, int want,
+                       RowList &starlist) {
+      starlist.resize(2, static_cast<size_t>(want));
+      int n = 0;
+      int area[4];
+      double frac[4], frac_sum = 0, ra2 = 0, dec2 = 0, mag = 0, bv = 0;
+      db.find_areas(ra, dec, field, area[0], area[1], area[2], area[3], frac[0], frac[1], frac[2],
+                    frac[3]);
+      for (int a = 0; a < 4; a++) {
+        frac_sum += frac[a];
+        if (area[a] == 0) continue;
+        if (!db.open_area(dec, area[a])) return false;
+        const int upto = std::min<long>(want, ptrunc(want * frac_sum));
+        while (n < upto && db.read_star(ra, dec, field, ra2, dec2, mag, bv)) {
+          equatorial_standard(ra, dec, ra2, dec2, 1, starlist(0, static_cast<size_t>(n)),
+                              starlist(1, static_cast<size_t>(n)));
+          n++;
+        }
+      }
+      starlist.resize(2, static_cast<size_t>(n));
+      return n >= 4;
+    }
+
+    // Cubic fit of the matched quad centres, in the SIP convention. The measured
+    // list is the image quad centres relative to the reference pixel; the
+    // reference list is the database quad centres pushed through the linear
+    // solution into the same pixel frame. What is left between them is the
+    // distortion.
+    bool fit_sip(const MatchState &m, const IndexSolveResult &r, SipCoefficients &sip) {
+      const size_t len = m.b_xrefpositions.size();
+      if (len < 20) return false;
+
+      std::vector<SStar> measured(len), reference(len);
+      const double sin_dec_ref = std::sin(r.dec0), cos_dec_ref = std::cos(r.dec0);
+      const double det = r.cd2_2 * r.cd1_1 - r.cd1_2 * r.cd2_1;
+      if (det == 0) return false;
+
+      for (size_t i = 0; i < len; i++) {
+        measured[i].x = 1 + m.a_xy_positions(0, i) - r.crpix1;
+        measured[i].y = 1 + m.a_xy_positions(1, i) - r.crpix2;
+
+        double ra_t, dec_t;
+        standard_equatorial(r.ra0, r.dec0, m.b_xrefpositions[i], m.b_yrefpositions[i], 1, ra_t,
+                            dec_t);
+
+        const double sin_dec_t = std::sin(dec_t), cos_dec_t = std::cos(dec_t);
+        const double d_ra = ra_t - r.ra0;
+        const double h = sin_dec_t * sin_dec_ref + cos_dec_t * cos_dec_ref * std::cos(d_ra);
+        const double d_ra_deg = (cos_dec_t * std::sin(d_ra) / h) * 180 / kPi;
+        const double d_dec_deg =
+            ((sin_dec_t * cos_dec_ref - cos_dec_t * sin_dec_ref * std::cos(d_ra)) / h) * 180 / kPi;
+
+        reference[i].x = -(r.cd1_2 * d_dec_deg - r.cd2_2 * d_ra_deg) / det;
+        reference[i].y = +(r.cd1_1 * d_dec_deg - r.cd2_1 * d_ra_deg) / det;
+      }
+
+      std::string err;
+      TTrans sky_to_pixel, pixel_to_sky;
+      if (!calc_trans_cubic(reference, measured, sky_to_pixel, err)) return false;
+      if (!calc_trans_cubic(measured, reference, pixel_to_sky, err)) return false;
+
+      auto fill = [](double dst[4][4], const TTrans &t, bool y_axis) {
+        dst[0][0] = y_axis ? t.y00 : t.x00;
+        dst[0][1] = y_axis ? -1 + t.y01 : t.x01;
+        dst[0][2] = y_axis ? t.y02 : t.x02;
+        dst[0][3] = y_axis ? t.y03 : t.x03;
+        dst[1][0] = y_axis ? t.y10 : -1 + t.x10;
+        dst[1][1] = y_axis ? t.y11 : t.x11;
+        dst[1][2] = y_axis ? t.y12 : t.x12;
+        dst[2][0] = y_axis ? t.y20 : t.x20;
+        dst[2][1] = y_axis ? t.y21 : t.x21;
+        dst[3][0] = y_axis ? t.y30 : t.x30;
+      };
+      sip.ap_order = 3;
+      fill(sip.ap, sky_to_pixel, false);
+      fill(sip.bp, sky_to_pixel, true);
+      sip.a_order = 3;
+      fill(sip.a, pixel_to_sky, false);
+      fill(sip.b, pixel_to_sky, true);
+      sip.valid = true;
+      return true;
+    }
+  } // namespace
+
+  IndexRefineResult refine_with_database(StarDatabase &db, const RowList &stars, int width,
+                                         int height, IndexSolveResult &io,
+                                         const IndexSolveSettings &s, bool want_sip) {
+    IndexRefineResult out;
+    if (!io.solved) {
+      out.reason = "nothing to refine";
+      return out;
+    }
+
+    // The database is read over a *square* field, so a square the height of the
+    // image would leave its left and right edges uncovered — and every quad out
+    // there unmatchable. The port enlarges the square by sqrt((w/h)^2 + 1) to
+    // take in the whole image, and scales the star count by the same factor
+    // squared so the depth per square degree still matches the image's own.
+    const double scale_deg_px = std::fabs(io.cdelt2);
+    if (scale_deg_px <= 0 || width <= 0 || height <= 0) {
+      out.reason = "no scale";
+      return out;
+    }
+    const double aspect = static_cast<double>(width) / height;
+    const double oversize = std::sqrt(aspect * aspect + 1);
+    const double field = height * scale_deg_px * oversize * kPi / 180;
+    // A little less than the image count, since the square is based on height.
+    const int nrstars_image = static_cast<int>(stars.count());
+    const int want = std::max(
+        8, static_cast<int>(pround(nrstars_image / aspect * oversize * oversize)));
+
+    RowList db_stars;
+    if (!read_stars_at(db, io.ra0, io.dec0, field, want, db_stars)) {
+      out.reason = "could not read the database at the solved position";
+      return out;
+    }
+
+    // Both sides are quadded the same way the solve was, or they describe
+    // different things: a field that needed the larger groups to be found at all
+    // still needs them here.
+    MatchState m;
+    if (io.many_quads_pass) {
+      find_many_quads(db_stars, m.quad_star_distances1, 6);
+      RowList work = stars;
+      find_many_quads(work, m.quad_star_distances2, 6);
+    } else {
+      find_quads(nrstars_image, db_stars, m.quad_star_distances1);
+      RowList work = stars;
+      find_quads(nrstars_image, work, m.quad_star_distances2);
+    }
+    out.nr_candidates = static_cast<int>(m.quad_star_distances1.count());
+
+    if (!find_offset_and_rotation(m, s.minimum_quads, io.quad_tolerance_used)) {
+      out.reason = "no match at the solved position";
+      return out;
+    }
+    out.nr_quads = m.nr_references;
+    out.ok = true;
+
+    // Only displace the index solution when this one rests on at least as much
+    // evidence.
+    if (m.nr_references < std::max(s.minimum_quads, io.nr_inliers)) {
+      out.reason = "fewer quads than the index consensus, keeping that";
+      return out;
+    }
+    out.kept = true;
+
+    // The improved linear solution, about the same reference point the database
+    // stars were projected around.
+    wcs_from(m.solution_vector_x, m.solution_vector_y, io.ra0, io.dec0, width, height, io);
+    io.nr_references = m.nr_references;
+    io.refined = true;
+
+    if (want_sip) {
+      out.sip_valid = fit_sip(m, io, out.sip);
+      if (!out.sip_valid)
+        out.reason = m.b_xrefpositions.size() < 20 ? "fewer than 20 quads, SIP needs a cubic's worth"
+                                                  : "the cubic fit failed";
+    }
+    return out;
   }
 } // namespace astap

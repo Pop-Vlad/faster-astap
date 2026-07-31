@@ -68,6 +68,11 @@ namespace astap {
     int tiers_tried = 0;
     // Set when the solution needed the larger quad groups of the second pass.
     bool many_quads_pass = false;
+    // The tolerance the matching index was built with, carried so a later stage
+    // can match on the same terms.
+    double quad_tolerance_used = 0.007;
+    // Set once refine_with_database has improved this solution.
+    bool refined = false;
   };
 
   // `image_quads` comes from find_quads on the detected stars, in image pixel
@@ -103,4 +108,41 @@ namespace astap {
   IndexSolveResult solve_stars_with_tiers(const std::vector<QuadIndex> &tiers, const RowList &stars,
                                           int width, int height, const IndexSolveSettings &s = {},
                                           double density_hint = 0);
+
+  struct IndexRefineResult {
+    bool ok = false;
+    int nr_quads = 0;      // quads matched in the second pass
+    int nr_candidates = 0; // database quads it had to match against
+    bool sip_valid = false;
+    bool kept = false;  // false when the refit was discarded as less well supported
+    SipCoefficients sip;
+    std::string reason;
+  };
+
+  // Second pass, once the field is known.
+  //
+  // The index gives a position from quad centres alone, which is enough to
+  // identify the field but leaves accuracy on the table and rarely produces the
+  // twenty matched quads a cubic distortion fit needs. This reads the database
+  // once at the solved position, at a depth matched to the image's own star
+  // count, and redoes the match there — the same work the spiral does at each of
+  // its many positions, done once at the right one. It costs 0.3 to 0.9 ms all
+  // in, against a 5 ms solve.
+  //
+  // On success `io` is updated with the improved linear solution. SIP is fitted
+  // from the matched quad centres, exactly as the port does, and needs at least
+  // twenty of them.
+  //
+  // The refined solution is kept only when it rests on at least as many quads as
+  // the consensus it would replace. Measured over the corpus, every case where
+  // refining made the position worse was one where it matched fewer quads than
+  // the index already had; a fit from more independent points is the better
+  // constrained one, and a weakly supported fit should not displace a strong one.
+  //
+  // `stars` and `io` must be in the same pixel frame, and the returned SIP
+  // coefficients are in that frame too; a caller working on a binned copy has to
+  // rescale them (see scale_sip_to_original in the index solver front end).
+  IndexRefineResult refine_with_database(StarDatabase &db, const RowList &stars, int width,
+                                         int height, IndexSolveResult &io,
+                                         const IndexSolveSettings &s = {}, bool want_sip = false);
 } // namespace astap

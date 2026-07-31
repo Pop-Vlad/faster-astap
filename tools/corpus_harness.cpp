@@ -91,6 +91,8 @@ namespace {
     double idx_tier = 0;
     int idx_tiers_tried = 0;
     bool idx_many = false;
+    bool idx_refined = false;
+    int idx_refine_quads = 0;
     std::string idx_reason;
   };
 
@@ -131,6 +133,7 @@ int main(int argc, char **argv) {
   std::string csv, filter;
   int limit = 0;
   double tol = 0.007;
+  bool refine = true;
   for (int i = 3; i < argc; i++) {
     const std::string a = argv[i];
     if (a == "--hint") hint = true;
@@ -138,6 +141,7 @@ int main(int argc, char **argv) {
     else if (a == "--limit" && i + 1 < argc) limit = std::atoi(argv[++i]);
     else if (a == "--filter" && i + 1 < argc) filter = argv[++i];
     else if (a == "--tol" && i + 1 < argc) tol = std::atof(argv[++i]);
+    else if (a == "--norefine") refine = false;
     else if (a == "--density" && i + 1 < argc) {
       std::string v = argv[++i];
       size_t p = 0;
@@ -280,6 +284,12 @@ int main(int argc, char **argv) {
     // and the ladder has to be swept. A hint only reorders the sweep.
     IndexSolveResult r =
         solve_stars_with_tiers(tiers, c.stars, c.bwidth, c.bheight, is, hint ? c.density : 0.0);
+    if (refine && r.solved) {
+      IndexRefineResult rr =
+          refine_with_database(db, c.stars, c.bwidth, c.bheight, r, is, false);
+      c.idx_refined = rr.kept;
+      c.idx_refine_quads = rr.nr_quads;
+    }
     c.idx_secs = secs(s0, Clock::now());
     c.idx_error = r.solved ? arcsec_between(r.ra0, r.dec0, c.true_ra, c.true_dec) : 0;
     // A solve that lands somewhere else is a failure, not a solve.
@@ -312,6 +322,7 @@ int main(int argc, char **argv) {
     if (c.idx_solved) {
       std::printf(" %5.2fpx %6.3fs  tier %-6.0f %2d inliers%s", c.idx_error / c.true_scale,
                   c.idx_secs, c.idx_tier, c.idx_inliers, c.idx_many ? " [many]" : "");
+      if (c.idx_refined) std::printf(" +%d", c.idx_refine_quads);
       idx_ok++;
     } else {
       std::printf(" %-30s", c.idx_reason.c_str());
@@ -333,13 +344,13 @@ int main(int argc, char **argv) {
     std::ofstream f(csv);
     f << "image,fov_deg,stars,density,port_solved,port_error_arcsec,port_secs,"
          "idx_solved,idx_error_arcsec,idx_secs,idx_tier,idx_inliers,idx_tiers_tried,"
-         "idx_many_quads,idx_reason\n";
+         "idx_many_quads,idx_refined,idx_refine_quads,idx_reason\n";
     for (const ImageCase &c : cases)
       f << basename_of(c.file) << "," << c.fov_deg << "," << c.nstars << "," << c.density << ","
         << c.port_good << "," << c.port_error << "," << c.port_secs << ","
         << c.idx_solved << "," << c.idx_error << "," << c.idx_secs << "," << c.idx_tier << ","
-        << c.idx_inliers << "," << c.idx_tiers_tried << "," << c.idx_many << ",\""
-        << c.idx_reason << "\"\n";
+        << c.idx_inliers << "," << c.idx_tiers_tried << "," << c.idx_many << ","
+        << c.idx_refined << "," << c.idx_refine_quads << ",\"" << c.idx_reason << "\"\n";
     std::printf("wrote %s\n", csv.c_str());
   }
   return gate_fail == 0 ? 0 : 1;

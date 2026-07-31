@@ -12,6 +12,7 @@
 
 #include <chrono>
 #include <cstdlib>
+#include <cmath>
 #include <cstring>
 #include <fstream>
 #include <iostream>
@@ -91,6 +92,8 @@ namespace {
         "-m   minimum_star_size[\"] {default 1.5, applied only with -fov}\n"
         "-z   downsample_factor[0,1,2,3,4,..] {0 for auto selection}\n"
         "-o   file {name the output files with this base path & file name}\n"
+        "-sip {add SIP distortion coefficients; needs -wcs to be written out}\n"
+        "-norefine {skip the second pass, leaving the index solution as it is}\n"
         "-wcs {write a .wcs file in the FITS header format}\n"
         "-log {write the solver log to a .log text file}\n"
         "-progress {log all progress steps and messages}\n"
@@ -152,6 +155,20 @@ namespace {
     head.cd1_2 = r.cd1_2 / bin;
     head.cd2_1 = r.cd2_1 / bin;
     head.cd2_2 = r.cd2_2 / bin;
+  }
+  // SIP coefficients from the binned frame, rewritten for original pixels.
+  //
+  // The polynomial takes an offset from the reference pixel and returns a
+  // correction, both in pixels, and offsets scale exactly: u_orig = bin * u_bin,
+  // because the reference pixel is mapped by the same relation as every other.
+  // A term c*u^p*v^q therefore becomes c * bin^(1-p-q) in the original frame.
+  void scale_sip_to_original(astap::SipCoefficients &sip, int bin) {
+    if (!sip.valid || bin == 1) return;
+    double (*tables[4])[4] = {sip.a, sip.b, sip.ap, sip.bp};
+    for (double (*t)[4] : tables)
+      for (int p = 0; p < 4; p++)
+        for (int q = 0; q < 4; q++)
+          if (t[p][q] != 0) t[p][q] *= std::pow(static_cast<double>(bin), 1 - p - q);
   }
 } // namespace
 
@@ -357,6 +374,31 @@ int main(int argc, char **argv) {
       continue;
     }
 
+    // Second pass: with the position known, read the database once at it and
+    // redo the match there. This is what lifts the accuracy and produces enough
+    // matched quads for a distortion fit.
+    astap::SipCoefficients sip;
+    if (has("norefine") && has("sip"))
+      log("Note: -sip needs the second pass, which -norefine disables. No SIP written.");
+    if (!has("norefine")) {
+      const auto p0 = Clock::now();
+      astap::IndexRefineResult ref = astap::refine_with_database(
+          db, stars, small.width(), small.height(), res, {}, has("sip"));
+      const double refine_secs = secs(p0, Clock::now());
+      if (ref.ok && progress)
+        log("Second pass: " + std::to_string(ref.nr_quads) + " quads matched against " +
+            std::to_string(ref.nr_candidates) + " database quads in " +
+            astap::float_to_str(refine_secs * 1000, 1) + " ms" +
+            (ref.kept ? "." : ", discarded: " + ref.reason));
+      if (!ref.ok && progress) log("Second pass skipped: " + ref.reason);
+      if (ref.sip_valid) {
+        sip = ref.sip;
+        scale_sip_to_original(sip, bin);
+      } else if (has("sip")) {
+        log("No SIP coefficients: " + ref.reason);
+      }
+    }
+
     scale_solution_to_original(res, bin, head);
     log("Solution found: " + astap::prepare_ra(head.ra0, ": ") + " " +
         astap::prepare_dec(head.dec0, "d "));
@@ -365,15 +407,15 @@ int main(int argc, char **argv) {
         astap::float_to_str(head.crota2, 2) + "d, " + std::to_string(res.nr_inliers) +
         " quads at depth tier " + astap::float_to_str(res.tier_density, 1) + " stars/deg^2 (" +
         std::to_string(res.tiers_tried) + " tiers tried" +
-        (res.many_quads_pass ? ", second pass" : "") + ").");
+        (res.many_quads_pass ? ", larger quad groups" : "") +
+        (res.refined ? ", refined" : "") + (sip.valid ? ", SIP" : "") + ").");
 
     astap::write_ini(change_file_ext(out_base, ".ini"), true, head, cmdline, astap::kErrNone, "");
 
     if (has("wcs")) {
       const std::string comment = "Solved in " + astap::float_to_str(elapsed, 3) +
                                   " sec by the index method.";
-      astap::SipCoefficients no_sip;
-      astap::update_solution_cards(head.cards, head, no_sip, true, comment);
+      astap::update_solution_cards(head.cards, head, sip, true, comment);
       astap::remove_key(head.cards, "NAXIS1  =");
       astap::remove_key(head.cards, "NAXIS2  =");
       astap::update_integer(head.cards, "NAXIS   =",
