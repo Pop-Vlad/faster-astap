@@ -6,7 +6,7 @@ ground truth travels with the file — that is what makes this usable as a
 capability gate rather than a self-consistency check.
 
 The grid is chosen to exercise the things that actually break a plate solver,
-per docs/index_solver.md:
+per the index solver sections of README.md:
 
   * field of view from 0.25 to 10 degrees, crossing the auto-FOV range
     (0.38 to 9.5) and the database-type switch at 6 degrees;

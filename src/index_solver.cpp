@@ -8,6 +8,7 @@
 
 #include "astap/astro_math.h"
 #include "astap/matching.h"
+#include "astap/quads.h"
 
 namespace astap {
   namespace {
@@ -155,14 +156,6 @@ namespace astap {
     }
 
     // Fits one candidate sky position from its consensus set.
-    //
-    // A refinement pass was tried here and removed: re-scanning every candidate
-    // pair at the fitted solution and fitting again changed the corpus mean
-    // error by nothing at all (0.248 px either way, 1 image better and 1 worse).
-    // The RANSAC consensus already contains every pair the solution explains, so
-    // the residual 0.2 px is the precision of a quad centre, not a shortage of
-    // points. Do not retry this; a real improvement has to come from the star
-    // positions, not the quad centres.
     bool fit_at(const QuadIndex &index, const RowList &image_quads,
                 const std::vector<Pair> &consensus, double ref_ra, double ref_dec, int width,
                 int height, const IndexSolveSettings &s, IndexSolveResult &out) {
@@ -304,13 +297,12 @@ namespace astap {
 
     // 2. Joint vote on scale *and* position.
     //
-    // Voting on scale alone and then filtering, as this used to, throws the
-    // solution away whenever a noise bin outranks the true one — which happens,
-    // because scale is one dimensional and coincidental matches pile up in it.
-    // Measured on the galactic pole field: a pure-noise bin took 22 votes to the
-    // true bin's 18, and every true pair was discarded before the position vote
-    // ever ran. Voting on the two together spreads the noise across both axes
-    // while the true pairs stay in one bucket.
+    // The two have to be voted on together rather than in sequence. Scale is one
+    // dimensional, so coincidental matches pile up in it densely enough that a
+    // noise bin can outrank the true one; filtering to the winning scale first
+    // would then discard every true pair before position was ever considered.
+    // Voting on both at once spreads the noise across two axes while the true
+    // pairs stay in one bucket.
     const double diag_px = std::sqrt(static_cast<double>(width) * width +
                                      static_cast<double>(height) * height);
 
@@ -468,5 +460,46 @@ namespace astap {
     }
     best.tiers_tried = tried;
     return best;
+  }
+
+  IndexSolveResult solve_stars_with_tiers(const std::vector<QuadIndex> &tiers, const RowList &stars,
+                                          int width, int height, const IndexSolveSettings &s,
+                                          double density_hint) {
+    auto attempt = [&](bool many, IndexSolveResult &r) {
+      RowList work = stars;  // find_quads sorts its input in place
+      RowList quads;
+      if (many)
+        find_many_quads(work, quads, 6);
+      else
+        find_quads(static_cast<int>(work.count()), work, quads);
+      r = solve_with_tiers(tiers, quads, width, height, s, density_hint);
+      return r.solved;
+    };
+
+    IndexSolveResult r;
+
+    // Pass 1: one quad per star, from its three nearest neighbours. The ordinary
+    // path, and it solves most images.
+    if (attempt(false, r)) return r;
+
+    // Pass 2: every quad from each star's six nearest neighbours, fifteen per
+    // star instead of one. This is what sparse and wide fields need.
+    //
+    // A quad matches only when the image and the catalogue chose the same four
+    // stars, and at a few stars per square degree that is fragile: one detection
+    // the catalogue subset lacks changes which three neighbours a star has, and
+    // so replaces its quad outright. A 10 degree field at 1 star/deg^2 yields 76
+    // quads with no redundancy to absorb that; the larger group yields 1024, and
+    // takes the true pairs on such a field from 3 to 15. C(6,4) contains the
+    // three-nearest quad, so this is a strict superset and can only add matches.
+    // It is a second pass purely because it costs fifteen times the queries.
+    if (attempt(true, r)) {
+      r.many_quads_pass = true;
+      return r;
+    }
+
+    r.solved = false;
+    r.reason = "no depth tier solved this image";
+    return r;
   }
 } // namespace astap

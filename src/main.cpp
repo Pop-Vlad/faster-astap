@@ -134,6 +134,7 @@ int main(int argc, char **argv) {
   if (has("sip")) settings.add_sip = val("sip") != "n";
   if (has("speed")) settings.force_oversize = val("speed").find("slow") != std::string::npos;
   if (has("check")) settings.check_pattern_filter = val("check") != "n";
+  if (has("gpu")) settings.use_gpu = val("gpu") != "n";
   if (has("D")) settings.star_database = val("D");
   settings.show_log = progress;
   if (has("threads")) astap::set_thread_count((unsigned) std::atoi(val("threads").c_str()));

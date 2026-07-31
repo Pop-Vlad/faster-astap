@@ -103,7 +103,7 @@ namespace astap {
 
     // Quads from the brightest `take` stars of a tile, appended to the per-tile
     // output buffers with their centres back in absolute coordinates.
-    void quads_from_tile(const TileStars &t, size_t take, std::vector<float> &ratio,
+    void quads_from_tile(const TileStars &t, size_t take, bool many, std::vector<float> &ratio,
                          std::vector<double> &d1, std::vector<double> &ra,
                          std::vector<double> &dec) {
       take = std::min(take, t.projected.count());
@@ -117,10 +117,11 @@ namespace astap {
         stars(2, i) = t.projected(2, i);
       }
 
-      // The image side uses find_quads with its own star count; here the tile is
-      // dense, so the regular three-nearest path applies.
       RowList quads;
-      find_quads(1000 /* forces the regular path */, stars, quads);
+      if (many)
+        find_many_quads(stars, quads, 6);  // 15 per star, see many_quads_below_density
+      else
+        find_quads(1000 /* forces the regular three-nearest path */, stars, quads);
 
       ratio.reserve(ratio.size() + quads.count() * 5);
       d1.reserve(d1.size() + quads.count());
@@ -230,7 +231,8 @@ namespace astap {
       if (have) {
         for (int k = 0; k < ntiers; k++)
           quads_from_tile(tile, static_cast<size_t>(stars_wanted(ntiles, densities[k])),
-                          t_ratio[k][ti], t_d1[k][ti], t_ra[k][ti], t_dec[k][ti]);
+                          densities[k] < base.many_quads_below_density, t_ratio[k][ti],
+                          t_d1[k][ti], t_ra[k][ti], t_dec[k][ti]);
       }
 
       const int d = ++done;
@@ -270,7 +272,7 @@ namespace astap {
     // match: a file read with the wrong endianness or an older layout would not
     // fail, it would match against nonsense.
     const char kIndexMagic[8] = {'A', 'S', 'T', 'A', 'P', 'Q', 'I', 'X'};
-    constexpr uint32_t kIndexVersion = 1;
+    constexpr uint32_t kIndexVersion = 2;
     constexpr uint32_t kByteOrderMark = 0x01020304u;
 
     template <typename T>

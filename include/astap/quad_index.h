@@ -1,5 +1,5 @@
 // A searchable index of database quads, built once and queried per image.
-// See docs/index_solver.md for the design and its risks.
+// See the index solver sections of README.md for the design and its risks.
 
 #pragma once
 
@@ -22,6 +22,18 @@ namespace astap {
     // Must match the solver's matching tolerance; it also sets the hash bin
     // width, so an index is only valid for the tolerance it was built with.
     double quad_tolerance = 0.007;
+
+    // Below this density, build every quad from each star's six nearest
+    // neighbours (C(6,4) = 15 per star) instead of just its three nearest.
+    //
+    // A quad only matches when the image and the catalogue picked the same four
+    // stars, and at a few stars per square degree that agreement is fragile: one
+    // detection the catalogue subset does not contain changes which three
+    // neighbours a star has, and so replaces its quad entirely. A ten degree
+    // field yields only ~76 quads, with no redundancy to absorb that. The larger
+    // group is a strict superset — C(6,4) contains the three-nearest quad — so it
+    // can only add matches, and the sparse tiers are small enough to afford it.
+    double many_quads_below_density = 5.0;
 
     // Restrict the build to a cap around this position. radius_deg >= 180
     // covers the sky.

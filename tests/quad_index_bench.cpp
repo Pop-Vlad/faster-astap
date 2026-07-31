@@ -1,7 +1,7 @@
 // Exercises the quad index against a real image: build the index, look up the
 // image quads, and check that the matches concentrate on the true position.
 // This is the first end-to-end evidence that design B can work; it is not yet
-// a solver. See docs/index_solver.md.
+// a solver. See README.md.
 
 #include <algorithm>
 #include <chrono>

@@ -1,5 +1,5 @@
 // Solver built on a pre-built quad index instead of a spiral search.
-// See docs/index_solver.md.
+// See the index solver sections of README.md.
 //
 // The matching front end is new — one pass over the image quads against a
 // whole-sky index, a joint vote on scale and position, then a RANSAC consensus
@@ -66,6 +66,8 @@ namespace astap {
     double scale_arcsec_px = 0;
     double tier_density = 0;  // depth tier that produced the solution
     int tiers_tried = 0;
+    // Set when the solution needed the larger quad groups of the second pass.
+    bool many_quads_pass = false;
   };
 
   // `image_quads` comes from find_quads on the detected stars, in image pixel
@@ -87,4 +89,18 @@ namespace astap {
   IndexSolveResult solve_with_tiers(const std::vector<QuadIndex> &tiers, const RowList &image_quads,
                                     int width, int height, const IndexSolveSettings &s = {},
                                     double density_hint = 0);
+
+  // Solves from a detected star list rather than from pre-built quads.
+  //
+  // Quads are first built one per star from its three nearest neighbours, which
+  // solves most images. If that finds nothing, they are rebuilt from every
+  // combination of each star's six nearest — fifteen per star, a strict superset
+  // — which is what sparse and wide fields need: a quad matches only when the
+  // image and the catalogue chose the same four stars, and at a few stars per
+  // square degree a single differing detection replaces a star's quad outright.
+  //
+  // Prefer this over solve_with_tiers when the star list is available.
+  IndexSolveResult solve_stars_with_tiers(const std::vector<QuadIndex> &tiers, const RowList &stars,
+                                          int width, int height, const IndexSolveSettings &s = {},
+                                          double density_hint = 0);
 } // namespace astap

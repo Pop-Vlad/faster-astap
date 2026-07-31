@@ -74,7 +74,7 @@ namespace {
     double fov_deg = 0;
     size_t nstars = 0;
     double density = 0;  // detected stars per square degree
-    RowList quads;
+    RowList stars;
 
     // Port
     bool port_solved = false;
@@ -90,6 +90,7 @@ namespace {
     int idx_inliers = 0;
     double idx_tier = 0;
     int idx_tiers_tried = 0;
+    bool idx_many = false;
     std::string idx_reason;
   };
 
@@ -212,7 +213,7 @@ int main(int argc, char **argv) {
     c.density = c.nstars / std::max(1e-9, static_cast<double>(c.fov_deg) * c.fov_deg *
                                               (std::min(c.width, c.height) /
                                                static_cast<double>(std::max(c.width, c.height))));
-    find_quads(static_cast<int>(stars.count()), stars, c.quads);
+    c.stars = stars;
 
     // The port, on the original image.
     SolverSettings ss;
@@ -277,8 +278,8 @@ int main(int argc, char **argv) {
     auto s0 = Clock::now();
     // No density hint: this is the blind case, where the field size is unknown
     // and the ladder has to be swept. A hint only reorders the sweep.
-    IndexSolveResult r = solve_with_tiers(tiers, c.quads, c.bwidth, c.bheight, is,
-                                          hint ? c.density : 0.0);
+    IndexSolveResult r =
+        solve_stars_with_tiers(tiers, c.stars, c.bwidth, c.bheight, is, hint ? c.density : 0.0);
     c.idx_secs = secs(s0, Clock::now());
     c.idx_error = r.solved ? arcsec_between(r.ra0, r.dec0, c.true_ra, c.true_dec) : 0;
     // A solve that lands somewhere else is a failure, not a solve.
@@ -286,6 +287,7 @@ int main(int argc, char **argv) {
     c.idx_inliers = r.nr_inliers;
     c.idx_tier = r.tier_density;
     c.idx_tiers_tried = r.tiers_tried;
+    c.idx_many = r.many_quads_pass;
     c.idx_reason = r.solved ? (c.idx_solved ? "" : "wrong position") : r.reason;
   }
 
@@ -308,8 +310,8 @@ int main(int argc, char **argv) {
       std::printf("%-14s |", c.port_solved ? "WRONG" : "no solution");
     }
     if (c.idx_solved) {
-      std::printf(" %5.2fpx %6.3fs  tier %-6.0f %2d inliers", c.idx_error / c.true_scale,
-                  c.idx_secs, c.idx_tier, c.idx_inliers);
+      std::printf(" %5.2fpx %6.3fs  tier %-6.0f %2d inliers%s", c.idx_error / c.true_scale,
+                  c.idx_secs, c.idx_tier, c.idx_inliers, c.idx_many ? " [many]" : "");
       idx_ok++;
     } else {
       std::printf(" %-30s", c.idx_reason.c_str());
@@ -330,12 +332,14 @@ int main(int argc, char **argv) {
   if (!csv.empty()) {
     std::ofstream f(csv);
     f << "image,fov_deg,stars,density,port_solved,port_error_arcsec,port_secs,"
-         "idx_solved,idx_error_arcsec,idx_secs,idx_tier,idx_inliers,idx_tiers_tried,idx_reason\n";
+         "idx_solved,idx_error_arcsec,idx_secs,idx_tier,idx_inliers,idx_tiers_tried,"
+         "idx_many_quads,idx_reason\n";
     for (const ImageCase &c : cases)
       f << basename_of(c.file) << "," << c.fov_deg << "," << c.nstars << "," << c.density << ","
         << c.port_good << "," << c.port_error << "," << c.port_secs << ","
         << c.idx_solved << "," << c.idx_error << "," << c.idx_secs << "," << c.idx_tier << ","
-        << c.idx_inliers << "," << c.idx_tiers_tried << ",\"" << c.idx_reason << "\"\n";
+        << c.idx_inliers << "," << c.idx_tiers_tried << "," << c.idx_many << ",\""
+        << c.idx_reason << "\"\n";
     std::printf("wrote %s\n", csv.c_str());
   }
   return gate_fail == 0 ? 0 : 1;

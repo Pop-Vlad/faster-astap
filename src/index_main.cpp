@@ -5,7 +5,7 @@
 // astap_solve walks a squared spiral over the sky, rebuilding database quads at
 // every position; this one queries a pre-built whole-sky quad index and votes.
 //
-// The index is a ladder of depth tiers (see docs/index_solver.md). Building it
+// The index is a ladder of depth tiers (see README.md). Building it
 // takes a few seconds and the result is the same for every image and every run,
 // so it is cached under ~/.cache/faster-astap and reused. The first run on a new
 // star database pays for the build; later runs do not.
@@ -332,11 +332,8 @@ int main(int argc, char **argv) {
       continue;
     }
 
-    astap::RowList quads;
-    astap::find_quads(static_cast<int>(stars.count()), stars, quads);
     if (progress)
-      log("Image: " + std::to_string(stars.count()) + " stars, " + std::to_string(quads.count()) +
-          " quads, binning " + std::to_string(bin));
+      log("Image: " + std::to_string(stars.count()) + " stars, binning " + std::to_string(bin));
 
     // The tier sweep is ordered by the image's star density when the field size
     // is known; without -fov every tier is tried, cheapest first.
@@ -347,8 +344,8 @@ int main(int argc, char **argv) {
     }
 
     const auto s0 = Clock::now();
-    astap::IndexSolveResult res =
-        astap::solve_with_tiers(tiers, quads, small.width(), small.height(), {}, density_hint);
+    astap::IndexSolveResult res = astap::solve_stars_with_tiers(
+        tiers, stars, small.width(), small.height(), {}, density_hint);
     const double elapsed = secs(s0, Clock::now());
 
     if (!res.solved) {
@@ -367,7 +364,8 @@ int main(int argc, char **argv) {
         astap::float_to_str(std::fabs(head.cdelt2) * 3600, 4) + "\"/px, rotation " +
         astap::float_to_str(head.crota2, 2) + "d, " + std::to_string(res.nr_inliers) +
         " quads at depth tier " + astap::float_to_str(res.tier_density, 1) + " stars/deg^2 (" +
-        std::to_string(res.tiers_tried) + " tiers tried).");
+        std::to_string(res.tiers_tried) + " tiers tried" +
+        (res.many_quads_pass ? ", second pass" : "") + ").");
 
     astap::write_ini(change_file_ext(out_base, ".ini"), true, head, cmdline, astap::kErrNone, "");
 
