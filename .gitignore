@@ -5,8 +5,6 @@ build/
 *.wcs
 *.log
 .idea/
-build-acpp
-build-sycl
 
 # Survey cutouts, refetch with tools/fetch_skyview_corpus.py
 corpus/*.fits

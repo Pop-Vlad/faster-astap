@@ -54,7 +54,7 @@ Images must be uncompressed FITS. For PNG/TIFF/JPEG use
 
 ## Performance
 
-Measured on a 13600K (14 cores / 20 threads) with an RTX 3090, solving a
+Measured on a 13600K (14 cores / 20 threads), solving a
 6020×4015 frame against the D80 database. Best of three runs with a warm page cache.
 
 "Blind" starts the search **90° from the true position** — a deliberately
@@ -68,7 +68,6 @@ reports where it is pointing.
 | `astap_cli` 2026.05.18 (reference) | 24.39 s | 1.0x | 0.341 s | 1.0x |
 | `astap_solve`, 1 thread | 9.86 s | 2.5x | 0.180 s | 1.9x |
 | `astap_solve`, 20 threads | **3.07 s** | **7.9x** | **0.158 s** | **2.2x** |
-| `astap_solve`, 20 threads + `-gpu` (RTX 3090) | 3.72 s | 6.6x | 0.622 s | 0.5x |
 | `astap_index_solve`, per run | 1.65 s | 14.8x | 1.63 s | 0.2x |
 | `astap_index_solve`, per image in a batch | **0.005 s** | **4900x** | **0.002 s** | **170x** |
 
@@ -269,36 +268,9 @@ The plain build is in [Quick start](#quick-start) and needs nothing beyond a C++
 CMake targets: `astap_solve`, `astap_index_solve`, `corpus_harness`,
 `solver_tests`, `quad_batch_tests`, `quad_index_bench`.
 
-### Optional SYCL offload
-
-Quad construction can run on a SYCL device. The backend is written in plain
-SYCL 2020 with no vendor extensions, so it builds under either toolchain:
-
-```sh
-# oneAPI / DPC++
-source /opt/intel/oneapi/setvars.sh
-cmake -S . -B build-sycl -DASTAP_SYCL=ON -DCMAKE_CXX_COMPILER=icpx
-cmake --build build-sycl -j
-./build-sycl/astap_solve -f image.fits -gpu ...
-
-# AdaptiveCpp
-cmake -S . -B build-sycl -DASTAP_SYCL=ON -DAdaptiveCpp_DIR=/path/to/adaptivecpp/lib/cmake/AdaptiveCpp
-```
-
-`-gpu` selects the SYCL builder and falls back to the CPU one when no suitable
-device is present, so the flag is always safe to pass. `ASTAP_SYCL_TARGETS` maps
-to `-fsycl-targets`, e.g. `nvptx64-nvidia-cuda`.
-
-Two flags matter for correctness. `icpx` defaults to `-fp-model=fast`, which
-reassociates and uses reduced precision math; the build pins
-`-fp-model=precise -ffp-contract=off` so that neither host nor device may fuse
-`a*b+c` into an FMA and change the last bit. Without them the offloaded quads
-differ from the reference in about 17% of their values.
-
-`quad_batch_tests` is the gate: it compares whichever builder is available
-against `find_quads()` value by value with `memcmp`, across every group size the
-solver uses. A full blind solve through the SYCL path produces a solution
-identical to the plain build.
+`quad_batch_tests` compares the batched quad construction against
+`find_quads()` value by value with `memcmp`, across every group size the solver
+uses, so the batching cannot change a solution.
 
 ## The method
 
@@ -363,7 +335,7 @@ a margin of more than 20 000x — and the final fit is fp64 throughout.
 | `quad_index.{h,cpp}`       | the whole-sky quad index: tier ladder build, binned query, on-disk cache                       |
 | `index_solver.{h,cpp}`     | joint scale/position vote, RANSAC consensus, fit                                               |
 | `src/index_main.cpp`       | `astap_index_solve`                                                                            |
-| `quad_batch_sycl.cpp`      | optional SYCL quad construction, off by default                                                |
+| `quad_batch.{h,cpp}`       | quad construction for a whole batch of search positions, over the thread pool                  |
 | `tools/corpus_harness.cpp` | runs both solvers over a corpus and reports the capability gate                                |
 | `tools/fetch_skyview_corpus.py` | downloads the test corpus from NASA SkyView, with ground truth                            |
 | `tools/png_to_fits.py`     | PNG/TIFF/JPEG to 16 bit FITS                                                                   |

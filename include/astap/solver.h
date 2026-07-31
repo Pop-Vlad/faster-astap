@@ -30,7 +30,6 @@
 #include <vector>
 
 #include "astap/matching.h"
-#include "astap/quad_batch.h"
 #include "astap/star_database.h"
 #include "astap/star_detection.h"
 #include "astap/types.h"
@@ -50,7 +49,6 @@ namespace astap {
     bool check_pattern_filter = false; // normalise the bayer pattern of raw OSC images
     bool add_sip = false; // add SIP distortion coefficients
     bool show_log = false; // log every search step
-    bool use_gpu = false;  // offload quad construction to a SYCL device when available
   };
 
   class Solver {
@@ -147,7 +145,6 @@ namespace astap {
     // unique_ptr because a worker holds an ifstream, which is not movable in a
     // way that survives vector growth on every standard library.
     std::vector<std::unique_ptr<SearchWorker> > workers_;
-    std::unique_ptr<QuadBatchBuilder> quad_builder_;
     // Per position storage for one batch, reused across batches.
     std::vector<RowList> batch_stars_;
     std::vector<RowList> batch_quads_;

@@ -9,6 +9,7 @@
 #include "astap/astro_math.h"
 #include "astap/calc_trans_cubic.h"
 #include "astap/parallel.h"
+#include "astap/quad_batch.h"
 #include "astap/quads.h"
 
 namespace astap {
@@ -250,14 +251,6 @@ namespace astap {
   }
 
   void Solver::prepare_workers() {
-    if (!quad_builder_) {
-      if (settings_.use_gpu) quad_builder_ = make_sycl_quad_builder();
-      if (!quad_builder_)
-        quad_builder_ = make_cpu_quad_builder();
-      else
-        say("Quad construction on " + quad_builder_->backend());
-    }
-
     const size_t want = std::max<size_t>(1, thread_count());
     while (workers_.size() < want)
       workers_.push_back(std::unique_ptr<SearchWorker>(new SearchWorker()));
@@ -692,9 +685,7 @@ namespace astap {
         // of the sequential search: it stops at the first solving position, and
         // batches are generated in spiral order.
         prepare_workers();
-        const size_t want = quad_builder_->preferred_batch();
-      const size_t max_batch =
-          want ? want : std::max<size_t>(1, workers_.size() * 4);
+        const size_t max_batch = std::max<size_t>(1, workers_.size() * 4);
         // Start with a single position and grow. Most solves with a hint succeed
         // on the very first position, and there is no reason to pay for a
         // parallel batch and its synchronisation to find that out.
@@ -763,9 +754,8 @@ namespace astap {
           const auto t_quad0 = std::chrono::steady_clock::now();
           timing_.read_stars_cpu += std::chrono::duration<double>(t_quad0 - t_read0).count();
 
-          // Phase 2: build the database quads for the whole batch. This is the
-          // one call an accelerator can take over.
-          quad_builder_->build(nrstars_image, batch_stars_, batch_quads_);
+          // Phase 2: build the database quads for the whole batch.
+          build_quads_batch(nrstars_image, batch_stars_, batch_quads_);
 
           const auto t_match0 = std::chrono::steady_clock::now();
           timing_.quads_cpu += std::chrono::duration<double>(t_match0 - t_quad0).count();

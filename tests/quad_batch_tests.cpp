@@ -1,5 +1,5 @@
-// Verifies that whatever QuadBatchBuilder is available reproduces find_quads()
-// bit for bit. This is the gate the SYCL backend has to pass.
+// Verifies that build_quads_batch() reproduces per-position find_quads() bit for
+// bit, so that spreading a batch over the thread pool cannot change a solution.
 #include <cmath>
 #include <cstdio>
 #include <cstring>
@@ -17,9 +17,8 @@ static bool bit_equal(double a, double b) {
   return std::memcmp(&a, &b, sizeof(double)) == 0;
 }
 
-// Compares a builder against per-position find_quads for a batch of lists.
-static void compare(QuadBatchBuilder& b, int nrstars_image, size_t npos, size_t nstars,
-                    unsigned seed) {
+// Compares the batch call against per-position find_quads for a batch of lists.
+static void compare(int nrstars_image, size_t npos, size_t nstars, unsigned seed) {
   std::mt19937 rng(seed);
   std::uniform_real_distribution<double> u(-3000, 3000);
 
@@ -36,7 +35,7 @@ static void compare(QuadBatchBuilder& b, int nrstars_image, size_t npos, size_t 
 
   std::vector<RowList> ref(npos), got;
   for (size_t p = 0; p < npos; p++) find_quads(nrstars_image, a_lists[p], ref[p]);
-  b.build(nrstars_image, b_lists, got);
+  build_quads_batch(nrstars_image, b_lists, got);
 
   size_t total = 0, mismatched = 0;
   for (size_t p = 0; p < npos; p++) {
@@ -56,8 +55,8 @@ static void compare(QuadBatchBuilder& b, int nrstars_image, size_t npos, size_t 
                 total, nrstars_image, nstars);
     failures++;
   } else {
-    std::printf("ok  : %-22s image stars %3d, %3zu positions x %3zu stars -> %zu values identical\n",
-                b.backend().c_str(), nrstars_image, npos, nstars, total);
+    std::printf("ok  : image stars %3d, %3zu positions x %3zu stars -> %zu values identical\n",
+                nrstars_image, npos, nstars, total);
   }
 }
 
@@ -68,19 +67,11 @@ int main() {
       {40, 80, "mode 5"},  {124, 94, "find_quads"}, {200, 300, "find_quads sorted"},
   };
 
-  auto cpu = make_cpu_quad_builder();
-  for (const Case& c : cases) compare(*cpu, c.nrstars_image, 24, c.nstars, 7);
+  for (const Case& c : cases) compare(c.nrstars_image, 24, c.nstars, 7);
 
-  auto gpu = make_sycl_quad_builder();
-  if (!gpu) {
-    std::printf("\n(no SYCL device available, backend not exercised)\n");
-  } else {
-    std::printf("\n");
-    for (const Case& c : cases) compare(*gpu, c.nrstars_image, 24, c.nstars, 7);
-    // A batch with mixed star counts must still come out right.
-    std::printf("\n");
-    compare(*gpu, 7, 40, 12, 99);
-  }
+  // A batch with mixed star counts must still come out right.
+  std::printf("\n");
+  compare(7, 40, 12, 99);
 
   if (failures) {
     std::printf("\n%d check(s) FAILED\n", failures);
