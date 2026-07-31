@@ -83,6 +83,19 @@ namespace astap {
     double search_offset() const { return sep_search_; } // radians
     double magnitude_limit() const { return mag2_ / 10; }
 
+    // Where the time went. The three `_cpu` entries are summed over all worker
+    // threads, so they exceed the wall clock; the two `_wall` entries do not
+    // overlap and do add up to the run time.
+    struct Timing {
+      double image_wall = 0;     // binning, background and star detection, per FOV attempt
+      double spiral_wall = 0;    // the whole squared spiral search
+      double read_stars_cpu = 0; // star database I/O and record decoding
+      double quads_cpu = 0;      // database quad construction
+      double match_cpu = 0;      // hash matching and the least squares fit
+    };
+
+    const Timing &timing() const { return timing_; }
+
   private:
     // Make mono, bin and crop.
     static void bin_mono_and_crop(int &binning, double crop, const ImageArray &img, ImageArray &img2,
@@ -114,6 +127,7 @@ namespace astap {
     struct SearchWorker {
       StarDatabase database;
       MatchState match;
+      double t_read = 0, t_quads = 0, t_match = 0;  // CPU time, this worker only
       RowList starlist;
       double mag2 = 0;
     };
@@ -143,6 +157,7 @@ namespace astap {
     double dec_mount_ = 99999;
     double solved_seconds_ = 0;
     double sep_search_ = 0;
+    Timing timing_;
   };
 
   // Writes the solution in the astap_cli .ini format.

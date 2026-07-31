@@ -1,6 +1,10 @@
 #include "astap/star_database.h"
 
 #include <algorithm>
+#include <list>
+#include <atomic>
+#include <mutex>
+#include <unordered_map>
 #include <cmath>
 #include <cstdio>
 #include <sys/stat.h>
@@ -8,6 +12,10 @@
 #include "astap/astro_math.h"
 
 namespace astap {
+  // Exactly the scale factors the record decoder applied.
+  static constexpr double kRaScale = kPi * 2 / ((256.0 * 256 * 256) - 1);
+  static constexpr double kDecScale = kPi * 0.5 / ((128.0 * 256 * 256) - 1);
+
   namespace {
     bool file_exists(const std::string &name) {
       struct stat st;
@@ -393,10 +401,10 @@ namespace astap {
             dec9_storage_ = static_cast<int8_t>(static_cast<int>(rec[3]) - 128);
             header_record = true;
           } else {
-            ra = ra_raw * (kPi * 2 / ((256.0 * 256 * 256) - 1));
+            ra = ra_raw * kRaScale;
             const int32_t dec_raw = (static_cast<int32_t>(dec9_storage_) << 16) +
                                     (static_cast<int32_t>(rec[4]) << 8) + static_cast<int32_t>(rec[3]);
-            dec = dec_raw * (kPi * 0.5 / ((128.0 * 256 * 256) - 1));
+            dec = dec_raw * kDecScale;
             if (record_size_ == 6)
               b_v = database_version_ == 2
                       ? static_cast<double>(static_cast<int8_t>(rec[5]))

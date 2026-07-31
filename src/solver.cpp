@@ -184,7 +184,7 @@ namespace astap {
                           double &mag2_) {
     int nrstars = 0;
     double ra2 = 0; // define a value, the first record read could be a header record
-    double dec2 = 0, b_v = 0;
+    double dec2 = 0;
 
     starlist.resize(2, static_cast<size_t>(nrstars_required));
 
@@ -199,6 +199,7 @@ namespace astap {
       database_.find_areas(telescope_ra, telescope_dec, search_field, area[0], area[1], area[2],
                            area[3], frac[0], frac[1], frac[2], frac[3]);
 
+      double b_v = 0;
       double frac_sum = 0;
       for (int a = 0; a < 4; a++) {
         frac_sum += frac[a];
@@ -208,7 +209,8 @@ namespace astap {
         const int nrstars_required2 =
             std::min<long>(nrstars_required, ptrunc(nrstars_required * frac_sum));
         while (nrstars < nrstars_required2 &&
-               database_.read_star(telescope_ra, telescope_dec, search_field, ra2, dec2, mag2_, b_v)) {
+               database_.read_star(telescope_ra, telescope_dec, search_field, ra2, dec2, mag2_,
+                                   b_v)) {
           // Store the star CCD x,y position.
           equatorial_standard(telescope_ra, telescope_dec, ra2, dec2, 1,
                               starlist(0, static_cast<size_t>(nrstars)),
@@ -498,8 +500,11 @@ namespace astap {
       const double hfd_min = std::max(0.8, min_star_size_arcsec / (binning * arcsec_per_px));
 
       // Do this on every repeat since hfd_min is adapted.
+      const auto t_img0 = std::chrono::steady_clock::now();
       bin_and_find_stars(img, head, binning, cropping, hfd_min, max_stars, starlist2,
                          warning_downsample);
+      timing_.image_wall +=
+          std::chrono::duration<double>(std::chrono::steady_clock::now() - t_img0).count();
       const int nrstars_image = static_cast<int>(starlist2.count());
 
       say("Search radius: " + float_to_str(settings_.radius_search, 1) + " degrees, " +
@@ -575,6 +580,7 @@ namespace astap {
           "d square search window. Step size " + float_to_str(fov2, 2) + "d. Oversize " +
           float_to_str(oversize, 2));
 
+      const auto t_spiral0 = std::chrono::steady_clock::now();
       int match_nr = 0;
       do {
         // maximum accuracy loop, a second solve after a match on a corner
@@ -708,12 +714,20 @@ namespace astap {
             const SpiralPos &p = batch[k];
             if (!p.worth_evaluating) return;
             SearchWorker &w = *workers_[t];
+            auto tick = std::chrono::steady_clock::now();
+            auto lap = [&tick] {
+              const auto now = std::chrono::steady_clock::now();
+              const double d = std::chrono::duration<double>(now - tick).count();
+              tick = now;
+              return d;
+            };
 
             if (!read_stars(w.database, p.ra_database, p.dec_database, search_field * oversize2,
                             nrstars_required2, w.starlist, w.mag2)) {
               db_failed[k] = 1;
               return;
             }
+            w.t_read += lap();
 
             if (match_nr == 1) {
               // A first solution was found: keep only the stars visible in the
@@ -736,10 +750,12 @@ namespace astap {
             }
 
             find_quads(nrstars_image, w.starlist, w.match.quad_star_distances1);
+            w.t_quads += lap();
 
             solved[k] = find_offset_and_rotation(w.match, minimum_quads, quad_tolerance, nullptr)
                           ? 1
                           : 0;
+            w.t_match += lap();
           });
 
           for (size_t k = 0; k < batch.size(); k++) {
@@ -850,11 +866,19 @@ namespace astap {
         // After a match possible on a corner, do a second solve using the found
         // position for maximum accuracy, using all stars.
       } while (!(!solution || match_nr >= 2));
+      timing_.spiral_wall +=
+          std::chrono::duration<double>(std::chrono::steady_clock::now() - t_spiral0).count();
 
       // Loop for autoFOV from 9.5 down to 0.37 degrees.
     } while (!(!autoFOV || solution || fov2 <= fov_min));
 
-    const auto elapsed = std::chrono::steady_clock::now() - startTick;
+    for (const auto& w : workers_) {
+    timing_.read_stars_cpu += w->t_read;
+    timing_.quads_cpu += w->t_quads;
+    timing_.match_cpu += w->t_match;
+  }
+
+  const auto elapsed = std::chrono::steady_clock::now() - startTick;
     solved_seconds_ =
         std::round(std::chrono::duration<double>(elapsed).count() * 10) / 10;
 

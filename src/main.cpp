@@ -145,6 +145,16 @@ int main(int argc, char **argv) {
 
   const bool solution = solver.solve(std::move(img), head);
 
+  {
+    const astap::Solver::Timing& t = solver.timing();
+    char buf[320];
+    std::snprintf(buf, sizeof(buf),
+                  "Timing: image stages %.2f s wall, spiral search %.2f s wall "
+                  "(CPU over all threads: database read %.2f s, quad build %.2f s, match %.2f s)",
+                  t.image_wall, t.spiral_wall, t.read_stars_cpu, t.quads_cpu, t.match_cpu);
+    log(buf);
+  }
+
   astap::write_ini(change_file_ext(filename_output, ".ini"), solution, head, cmdline,
                    solver.errorlevel(), solver.warning());
 
