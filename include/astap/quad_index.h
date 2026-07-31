@@ -56,6 +56,16 @@ namespace astap {
     size_t bytes() const;
 
   private:
+    friend bool build_tiers(StarDatabase &, const QuadIndexSettings &, const std::vector<double> &,
+                            std::vector<QuadIndex> &, const std::function<void(double)> &);
+    friend bool save_index_file(const std::string &, const std::vector<QuadIndex> &);
+    friend bool load_index_file(const std::string &, std::vector<QuadIndex> &, double, double,
+                                std::string *);
+
+    // Sorts the accumulated quads into the 3D bin grid. Called once the quad
+    // arrays are complete, by either build path.
+    void finalise();
+
     // Bin on the first three ratios; probing the 3x3x3 neighbourhood covers the
     // tolerance ball in those dimensions, the other two are checked exactly.
     int bin_of(float v) const;
@@ -70,4 +80,69 @@ namespace astap {
     std::vector<uint32_t> cell_start_;  // CSR over the 3D bin grid
     std::vector<uint32_t> items_;
   };
+
+  // Builds one index per requested depth tier in a single pass over the database.
+  //
+  // A ladder of tiers is what makes the solver as capable as the spiral search,
+  // which adapts its depth at every position. Measured over the corpus, every
+  // image the index solver missed was missed for this reason alone: a field at
+  // 1000 stars/deg^2 or at 5 stars/deg^2 has no findable quads in an index built
+  // at 300, because a quad is only findable when all four of its stars were
+  // bright enough to be detected in the image.
+  //
+  // Building them together rather than one at a time matters: each tile's stars
+  // are read and projected once, at the deepest density requested, and every
+  // tier takes a prefix of that list. The read is the expensive part.
+  //
+  // `base` supplies the tolerance and the sky cap; `base.star_density` is
+  // ignored. `out` comes back in the same order as `densities`.
+  bool build_tiers(StarDatabase &db, const QuadIndexSettings &base,
+                   const std::vector<double> &densities, std::vector<QuadIndex> &out,
+                   const std::function<void(double)> &progress = nullptr);
+
+  // --- on-disk index ---------------------------------------------------------
+  //
+  // A ladder takes seconds to build and is identical for every image and every
+  // run, so a released solver builds it once and reads it back. Only the quad
+  // arrays are stored; the bin grid is rebuilt on load, which is faster than
+  // reading it.
+  //
+  // The file records the tolerance it was binned with and the database it came
+  // from. Loading refuses a file written by a different build, so a stale cache
+  // fails loudly instead of producing quietly wrong matches.
+
+  struct QuadIndexFile {
+    uint32_t version = 0;
+    int database_type = 0;
+    double quad_tolerance = 0;
+    double centre_ra = 0, centre_dec = 0, radius_deg = 180;
+    std::vector<double> densities;  // one per tier, in file order
+    std::vector<uint64_t> quads;    // quads per tier
+    uint64_t bytes = 0;
+  };
+
+  bool save_index_file(const std::string &path, const std::vector<QuadIndex> &tiers);
+
+  // Reads the tiers whose density lies in [min_density, max_density]; 0 and 0
+  // load every tier. Loading a subset is what lets a caller who knows the field
+  // size pay for one tier instead of the ladder. `error` receives a reason on
+  // failure.
+  bool load_index_file(const std::string &path, std::vector<QuadIndex> &out,
+                       double min_density = 0, double max_density = 0,
+                       std::string *error = nullptr);
+
+  // Reads the header only: which tiers a file holds, without loading them.
+  bool read_index_file_header(const std::string &path, QuadIndexFile &info,
+                              std::string *error = nullptr);
+
+  // Where a built ladder is cached by default: `$XDG_CACHE_HOME/faster-astap`,
+  // or `$HOME/.cache/faster-astap`. One file per star database, named for the
+  // database and the tolerance, because an index is only reusable by a solve
+  // that would have built the same one. Several databases can therefore be
+  // cached side by side.
+  std::string default_index_cache_path(const std::string &db_name, int database_type,
+                                       double quad_tolerance);
+
+  // Creates the directory holding `path` when it does not exist.
+  bool ensure_parent_directory(const std::string &path);
 } // namespace astap

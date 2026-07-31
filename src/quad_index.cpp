@@ -3,6 +3,14 @@
 #include <algorithm>
 #include <atomic>
 #include <cmath>
+#include <cstdio>
+#include <cstdlib>
+#include <cstring>
+#include <filesystem>
+#include <fstream>
+#include <istream>
+#include <ostream>
+#include <system_error>
 
 #include "astap/astro_math.h"
 #include "astap/parallel.h"
@@ -44,6 +52,95 @@ namespace astap {
       dec = 0;
       size_deg = ring_h;
     }
+
+    // One tile's stars, brightest first, already projected into the tile's own
+    // tangent plane in arcseconds. Tile-local projection is fine: over a 5.14
+    // degree tile the differential tangent-plane distortion is about 6e-4
+    // relative, against a quad tolerance of 7e-3.
+    struct TileStars {
+      double ra = 0, dec = 0;  // tile centre
+      RowList projected;       // x, y, magnitude placeholder
+    };
+
+    // Reads at most `want` stars of one tile. Returns false when the tile could
+    // not be opened; an empty result is not an error, only a sparse tile.
+    bool read_tile(const StarDatabase &db, int area, int want, TileStars &out, bool &io_error) {
+      double tsize;
+      tile_geometry(db.database_type(), area, out.ra, out.dec, tsize);
+
+      // Each thread needs its own reader: a StarDatabase owns a file handle and
+      // a read cursor, so it cannot be shared or copied.
+      StarDatabase reader;
+      reader.configure(db.path(), db.name(), db.database_type());
+      if (!reader.open_area(out.dec, area)) {
+        io_error = true;
+        return false;
+      }
+
+      // A field a little larger than the tile so the whole tile is covered.
+      const double field = tsize * 1.5 * kPi / 180;
+      std::vector<double> sra, sdec;
+      sra.reserve(want);
+      sdec.reserve(want);
+      double ra2 = 0, dec2 = 0, mag = 0, bv = 0;
+      while (static_cast<int>(sra.size()) < want &&
+             reader.read_star(out.ra, out.dec, field, ra2, dec2, mag, bv)) {
+        sra.push_back(ra2);
+        sdec.push_back(dec2);
+      }
+      if (sra.size() < 4) return false;
+
+      out.projected.resize(3, sra.size());
+      for (size_t i = 0; i < sra.size(); i++) {
+        double x, y;
+        equatorial_standard(out.ra, out.dec, sra[i], sdec[i], 1, x, y);
+        out.projected(0, i) = x;
+        out.projected(1, i) = y;
+        out.projected(2, i) = 100;
+      }
+      return true;
+    }
+
+    // Quads from the brightest `take` stars of a tile, appended to the per-tile
+    // output buffers with their centres back in absolute coordinates.
+    void quads_from_tile(const TileStars &t, size_t take, std::vector<float> &ratio,
+                         std::vector<double> &d1, std::vector<double> &ra,
+                         std::vector<double> &dec) {
+      take = std::min(take, t.projected.count());
+      if (take < 8) return;
+
+      // find_quads sorts its input in place, so each tier works on its own copy.
+      RowList stars(3, take);
+      for (size_t i = 0; i < take; i++) {
+        stars(0, i) = t.projected(0, i);
+        stars(1, i) = t.projected(1, i);
+        stars(2, i) = t.projected(2, i);
+      }
+
+      // The image side uses find_quads with its own star count; here the tile is
+      // dense, so the regular three-nearest path applies.
+      RowList quads;
+      find_quads(1000 /* forces the regular path */, stars, quads);
+
+      ratio.reserve(ratio.size() + quads.count() * 5);
+      d1.reserve(d1.size() + quads.count());
+      ra.reserve(ra.size() + quads.count());
+      dec.reserve(dec.size() + quads.count());
+      for (size_t q = 0; q < quads.count(); q++) {
+        for (int k = 1; k <= 5; k++) ratio.push_back(static_cast<float>(quads(k, q)));
+        d1.push_back(quads(0, q));
+        double qra, qdec;
+        standard_equatorial(t.ra, t.dec, quads(6, q), quads(7, q), 1, qra, qdec);
+        ra.push_back(qra);
+        dec.push_back(qdec);
+      }
+    }
+
+    // How many stars a tile should contribute at a given density.
+    int stars_wanted(int ntiles, double density) {
+      const double tile_area_deg2 = 41253.0 / ntiles;
+      return std::max(8, static_cast<int>(density * tile_area_deg2));
+    }
   } // namespace
 
   int QuadIndex::bin_of(float v) const {
@@ -62,118 +159,10 @@ namespace astap {
            (cell_start_.size() + items_.size()) * sizeof(uint32_t);
   }
 
-  bool QuadIndex::build(StarDatabase &db, const QuadIndexSettings &s,
-                        const std::function<void(double)> &progress) {
-    settings_ = s;
-    ratio_.clear();
-    d1_.clear();
-    ra_.clear();
-    dec_.clear();
-
-    const int ntiles = tile_count(db.database_type());
-    const double radius_rad = s.radius_deg * kPi / 180;
-
-    // Tiles are independent, so they are built in parallel and merged in tile
-    // order afterwards, which keeps the index deterministic.
-    std::vector<std::vector<float>> t_ratio(ntiles);
-    std::vector<std::vector<double>> t_d1(ntiles), t_ra(ntiles), t_dec(ntiles);
-    std::vector<char> t_ok(ntiles, 1);
-
-    std::atomic<int> done{0};
-    parallel_for(0, static_cast<size_t>(ntiles), [&](size_t ti, unsigned) {
-      const int area = static_cast<int>(ti) + 1;
-      double tra, tdec, tsize;
-      tile_geometry(db.database_type(), area, tra, tdec, tsize);
-
-      if (s.radius_deg < 180) {
-        double sep;
-        ang_sep(tra, tdec, s.centre_ra, s.centre_dec, sep);
-        if (sep > radius_rad + tsize * kPi / 180) return; // tile outside the cap
-      }
-
-      // How many stars this tile should contribute at the requested density.
-      const double tile_area_deg2 = 41253.0 / ntiles;
-      const int want = std::max(8, static_cast<int>(s.star_density * tile_area_deg2));
-
-      // Each thread needs its own reader: a StarDatabase owns a file handle and
-      // a read cursor, so it cannot be shared or copied.
-      StarDatabase reader;
-      reader.configure(db.path(), db.name(), db.database_type());
-      if (!reader.open_area(tdec, area)) {
-        t_ok[ti] = 0;
-        return;
-      }
-
-      // A field a little larger than the tile so the whole tile is covered.
-      const double field = tsize * 1.5 * kPi / 180;
-      std::vector<double> sra, sdec;
-      sra.reserve(want);
-      sdec.reserve(want);
-      {
-        double ra2 = 0, dec2 = 0, mag = 0, bv = 0;
-        while (static_cast<int>(sra.size()) < want &&
-               reader.read_star(tra, tdec, field, ra2, dec2, mag, bv)) {
-          sra.push_back(ra2);
-          sdec.push_back(dec2);
-        }
-      }
-      if (sra.size() < 8) return;
-
-      // Project into the tile's own tangent plane, in arcseconds.
-      RowList stars(3, sra.size());
-      for (size_t i = 0; i < sra.size(); i++) {
-        double x, y;
-        equatorial_standard(tra, tdec, sra[i], sdec[i], 1, x, y);
-        stars(0, i) = x;
-        stars(1, i) = y;
-        stars(2, i) = 100;
-      }
-
-      // The image side uses find_quads with its own star count; here the tile
-      // is dense, so the regular three-nearest path applies.
-      RowList quads;
-      find_quads(1000 /* forces the regular path */, stars, quads);
-
-      std::vector<float> &r = t_ratio[ti];
-      std::vector<double> &o1 = t_d1[ti];
-      std::vector<double> &ora = t_ra[ti];
-      std::vector<double> &odec = t_dec[ti];
-      r.reserve(quads.count() * 5);
-      o1.reserve(quads.count());
-      ora.reserve(quads.count());
-      odec.reserve(quads.count());
-
-      for (size_t q = 0; q < quads.count(); q++) {
-        for (int k = 1; k <= 5; k++) r.push_back(static_cast<float>(quads(k, q)));
-        o1.push_back(quads(0, q));
-        // Quad centre back to absolute coordinates.
-        double qra, qdec;
-        standard_equatorial(tra, tdec, quads(6, q), quads(7, q), 1, qra, qdec);
-        ora.push_back(qra);
-        odec.push_back(qdec);
-      }
-
-      const int d = ++done;
-      if (progress && (d % 32 == 0)) progress(static_cast<double>(d) / ntiles);
-    });
-
-    size_t total = 0;
-    for (int t = 0; t < ntiles; t++) total += t_d1[t].size();
-    ratio_.reserve(total * 5);
-    d1_.reserve(total);
-    ra_.reserve(total);
-    dec_.reserve(total);
-    for (int t = 0; t < ntiles; t++) {
-      ratio_.insert(ratio_.end(), t_ratio[t].begin(), t_ratio[t].end());
-      d1_.insert(d1_.end(), t_d1[t].begin(), t_d1[t].end());
-      ra_.insert(ra_.end(), t_ra[t].begin(), t_ra[t].end());
-      dec_.insert(dec_.end(), t_dec[t].begin(), t_dec[t].end());
-    }
-    if (d1_.empty()) return false;
-
+  void QuadIndex::finalise() {
     // Bin on the first three ratios. They lie in (0,1], so the bin count is
     // 1/tolerance plus a slot for the value 1.
-    nbins_ = static_cast<int>(1.0 / s.quad_tolerance) + 2;
+    nbins_ = static_cast<int>(1.0 / settings_.quad_tolerance) + 2;
     const size_t ncells = static_cast<size_t>(nbins_) * nbins_ * nbins_;
     cell_start_.assign(ncells + 1, 0);
     std::vector<uint32_t> cell_of_quad(d1_.size());
@@ -186,10 +175,292 @@ namespace astap {
     for (size_t c = 0; c < ncells; c++) cell_start_[c + 1] += cell_start_[c];
     items_.resize(d1_.size());
     std::vector<uint32_t> fill(cell_start_.begin(), cell_start_.end() - 1);
-    for (size_t i = 0; i < d1_.size(); i++) items_[fill[cell_of_quad[i]]++] = static_cast<uint32_t>(i);
+    for (size_t i = 0; i < d1_.size(); i++)
+      items_[fill[cell_of_quad[i]]++] = static_cast<uint32_t>(i);
+  }
+
+  bool QuadIndex::build(StarDatabase &db, const QuadIndexSettings &s,
+                        const std::function<void(double)> &progress) {
+    std::vector<QuadIndex> one;
+    if (!build_tiers(db, s, {s.star_density}, one, progress)) return false;
+    *this = std::move(one[0]);
+    return true;
+  }
+
+  bool build_tiers(StarDatabase &db, const QuadIndexSettings &base,
+                   const std::vector<double> &densities, std::vector<QuadIndex> &out,
+                   const std::function<void(double)> &progress) {
+    out.clear();
+    if (densities.empty()) return false;
+
+    const int ntiles = tile_count(db.database_type());
+    const int ntiers = static_cast<int>(densities.size());
+    const double radius_rad = base.radius_deg * kPi / 180;
+    double deepest = 0;
+    for (double d : densities) deepest = std::max(deepest, d);
+    const int want_deepest = stars_wanted(ntiles, deepest);
+
+    // Tiles are independent, so they are built in parallel and merged in tile
+    // order afterwards, which keeps the index deterministic. Every tier gets its
+    // own per-tile buffer.
+    std::vector<std::vector<std::vector<float>>> t_ratio(
+        ntiers, std::vector<std::vector<float>>(ntiles));
+    std::vector<std::vector<std::vector<double>>> t_d1(
+        ntiers, std::vector<std::vector<double>>(ntiles));
+    std::vector<std::vector<std::vector<double>>> t_ra(t_d1), t_dec(t_d1);
+
+    std::atomic<int> done{0};
+    std::atomic<int> io_errors{0};
+    parallel_for(0, static_cast<size_t>(ntiles), [&](size_t ti, unsigned) {
+      const int area = static_cast<int>(ti) + 1;
+      double tra, tdec, tsize;
+      tile_geometry(db.database_type(), area, tra, tdec, tsize);
+
+      if (base.radius_deg < 180) {
+        double sep;
+        ang_sep(tra, tdec, base.centre_ra, base.centre_dec, sep);
+        if (sep > radius_rad + tsize * kPi / 180) return; // tile outside the cap
+      }
+
+      // Read and project once, at the deepest tier; the others take a prefix.
+      TileStars tile;
+      bool io_error = false;
+      const bool have = read_tile(db, area, want_deepest, tile, io_error);
+      if (io_error) io_errors++;
+      if (have) {
+        for (int k = 0; k < ntiers; k++)
+          quads_from_tile(tile, static_cast<size_t>(stars_wanted(ntiles, densities[k])),
+                          t_ratio[k][ti], t_d1[k][ti], t_ra[k][ti], t_dec[k][ti]);
+      }
+
+      const int d = ++done;
+      if (progress && (d % 32 == 0)) progress(static_cast<double>(d) / ntiles);
+    });
+
+    out.resize(ntiers);
+    for (int k = 0; k < ntiers; k++) {
+      QuadIndex &ix = out[k];
+      ix.settings_ = base;
+      ix.settings_.star_density = densities[k];
+      size_t total = 0;
+      for (int t = 0; t < ntiles; t++) total += t_d1[k][t].size();
+      ix.ratio_.reserve(total * 5);
+      ix.d1_.reserve(total);
+      ix.ra_.reserve(total);
+      ix.dec_.reserve(total);
+      for (int t = 0; t < ntiles; t++) {
+        ix.ratio_.insert(ix.ratio_.end(), t_ratio[k][t].begin(), t_ratio[k][t].end());
+        ix.d1_.insert(ix.d1_.end(), t_d1[k][t].begin(), t_d1[k][t].end());
+        ix.ra_.insert(ix.ra_.end(), t_ra[k][t].begin(), t_ra[k][t].end());
+        ix.dec_.insert(ix.dec_.end(), t_dec[k][t].begin(), t_dec[k][t].end());
+      }
+      if (ix.d1_.empty()) {
+        out.clear();
+        return false;
+      }
+      ix.finalise();
+    }
 
     if (progress) progress(1.0);
     return true;
+  }
+
+  namespace {
+    // "ASTAP quad index". The byte order mark and the version both have to
+    // match: a file read with the wrong endianness or an older layout would not
+    // fail, it would match against nonsense.
+    const char kIndexMagic[8] = {'A', 'S', 'T', 'A', 'P', 'Q', 'I', 'X'};
+    constexpr uint32_t kIndexVersion = 1;
+    constexpr uint32_t kByteOrderMark = 0x01020304u;
+
+    template <typename T>
+    void put(std::ostream &f, const T &v) {
+      f.write(reinterpret_cast<const char *>(&v), sizeof(T));
+    }
+
+    template <typename T>
+    void get(std::istream &f, T &v) {
+      f.read(reinterpret_cast<char *>(&v), sizeof(T));
+    }
+
+    template <typename T>
+    void put_array(std::ostream &f, const std::vector<T> &v) {
+      if (!v.empty())
+        f.write(reinterpret_cast<const char *>(v.data()),
+                static_cast<std::streamsize>(v.size() * sizeof(T)));
+    }
+
+    template <typename T>
+    void get_array(std::istream &f, std::vector<T> &v, size_t n) {
+      v.resize(n);
+      if (n)
+        f.read(reinterpret_cast<char *>(v.data()), static_cast<std::streamsize>(n * sizeof(T)));
+    }
+
+    // Fixed size header, so tier blob offsets can be computed before writing.
+    struct TierEntry {
+      double density;
+      uint64_t nquads;
+      uint64_t offset;
+    };
+
+    size_t header_bytes(size_t ntiers) {
+      return sizeof(kIndexMagic) + 3 * sizeof(uint32_t) + sizeof(uint32_t) /* ntiers */ +
+             4 * sizeof(double) + ntiers * sizeof(TierEntry);
+    }
+
+    bool fail(std::string *error, const std::string &why) {
+      if (error) *error = why;
+      return false;
+    }
+  } // namespace
+
+  bool save_index_file(const std::string &path, const std::vector<QuadIndex> &tiers) {
+    if (tiers.empty()) return false;
+    std::ofstream f(path, std::ios::binary | std::ios::trunc);
+    if (!f) return false;
+
+    const QuadIndexSettings &s0 = tiers.front().settings();
+    std::vector<TierEntry> entries(tiers.size());
+    uint64_t offset = header_bytes(tiers.size());
+    for (size_t k = 0; k < tiers.size(); k++) {
+      const uint64_t n = tiers[k].size();
+      entries[k] = {tiers[k].settings().star_density, n, offset};
+      offset += n * (5 * sizeof(float) + 3 * sizeof(double));
+    }
+
+    f.write(kIndexMagic, sizeof(kIndexMagic));
+    put(f, kIndexVersion);
+    put(f, kByteOrderMark);
+    put(f, static_cast<uint32_t>(tiers.front().settings().radius_deg >= 180 ? 0 : 1));
+    put(f, static_cast<uint32_t>(tiers.size()));
+    put(f, s0.quad_tolerance);
+    put(f, s0.centre_ra);
+    put(f, s0.centre_dec);
+    put(f, s0.radius_deg);
+    for (const TierEntry &e : entries) put(f, e);
+
+    for (const QuadIndex &ix : tiers) {
+      put_array(f, ix.ratio_);
+      put_array(f, ix.d1_);
+      put_array(f, ix.ra_);
+      put_array(f, ix.dec_);
+    }
+    f.flush();
+    return static_cast<bool>(f);
+  }
+
+  namespace {
+    // Shared by the header reader and the loader.
+    bool open_and_read_header(const std::string &path, std::ifstream &f, QuadIndexFile &info,
+                              std::vector<TierEntry> &entries, std::string *error) {
+      f.open(path, std::ios::binary);
+      if (!f) return fail(error, "cannot open " + path);
+
+      char magic[8];
+      f.read(magic, sizeof(magic));
+      if (!f || std::memcmp(magic, kIndexMagic, sizeof(magic)) != 0)
+        return fail(error, path + " is not a quad index file");
+
+      uint32_t version = 0, bom = 0, reserved = 0, ntiers = 0;
+      get(f, version);
+      get(f, bom);
+      get(f, reserved);
+      get(f, ntiers);
+      if (version != kIndexVersion)
+        return fail(error, path + " was written by a different version, rebuild it");
+      if (bom != kByteOrderMark) return fail(error, path + " has the opposite byte order");
+      if (ntiers == 0 || ntiers > 4096) return fail(error, path + " has an implausible tier count");
+
+      info.version = version;
+      info.database_type = static_cast<int>(reserved);
+      get(f, info.quad_tolerance);
+      get(f, info.centre_ra);
+      get(f, info.centre_dec);
+      get(f, info.radius_deg);
+
+      entries.resize(ntiers);
+      info.densities.clear();
+      info.quads.clear();
+      info.bytes = 0;
+      for (uint32_t k = 0; k < ntiers; k++) {
+        get(f, entries[k]);
+        info.densities.push_back(entries[k].density);
+        info.quads.push_back(entries[k].nquads);
+        info.bytes += entries[k].nquads * (5 * sizeof(float) + 3 * sizeof(double));
+      }
+      if (!f) return fail(error, path + " is truncated");
+      return true;
+    }
+  } // namespace
+
+  bool read_index_file_header(const std::string &path, QuadIndexFile &info, std::string *error) {
+    std::ifstream f;
+    std::vector<TierEntry> entries;
+    return open_and_read_header(path, f, info, entries, error);
+  }
+
+  bool load_index_file(const std::string &path, std::vector<QuadIndex> &out, double min_density,
+                       double max_density, std::string *error) {
+    out.clear();
+    std::ifstream f;
+    QuadIndexFile info;
+    std::vector<TierEntry> entries;
+    if (!open_and_read_header(path, f, info, entries, error)) return false;
+
+    for (const TierEntry &e : entries) {
+      if (min_density > 0 && e.density < min_density) continue;
+      if (max_density > 0 && e.density > max_density) continue;
+
+      f.seekg(static_cast<std::streamoff>(e.offset));
+      if (!f) return fail(error, path + " is truncated");
+
+      QuadIndex ix;
+      ix.settings_.star_density = e.density;
+      ix.settings_.quad_tolerance = info.quad_tolerance;
+      ix.settings_.centre_ra = info.centre_ra;
+      ix.settings_.centre_dec = info.centre_dec;
+      ix.settings_.radius_deg = info.radius_deg;
+      get_array(f, ix.ratio_, static_cast<size_t>(e.nquads) * 5);
+      get_array(f, ix.d1_, static_cast<size_t>(e.nquads));
+      get_array(f, ix.ra_, static_cast<size_t>(e.nquads));
+      get_array(f, ix.dec_, static_cast<size_t>(e.nquads));
+      if (!f) return fail(error, path + " is truncated");
+      ix.finalise();
+      out.push_back(std::move(ix));
+    }
+    if (out.empty()) return fail(error, path + " holds no tier in the requested density range");
+    return true;
+  }
+
+  std::string default_index_cache_path(const std::string &db_name, int database_type,
+                                       double quad_tolerance) {
+    const char *xdg = std::getenv("XDG_CACHE_HOME");
+    const char *home = std::getenv("HOME");
+    std::filesystem::path dir;
+    if (xdg && *xdg) {
+      dir = std::filesystem::path(xdg) / "faster-astap";
+    } else if (home && *home) {
+      dir = std::filesystem::path(home) / ".cache" / "faster-astap";
+    } else {
+      dir = std::filesystem::temp_directory_path() / "faster-astap";
+    }
+
+    // The tolerance is part of the name because it sets the bin width: an index
+    // built at one tolerance cannot serve a solve at another.
+    char name[160];
+    std::snprintf(name, sizeof(name), "%s_%d_t%.4f.qix",
+                  db_name.empty() ? "unknown" : db_name.c_str(), database_type, quad_tolerance);
+    return (dir / name).string();
+  }
+
+  bool ensure_parent_directory(const std::string &path) {
+    const std::filesystem::path dir = std::filesystem::path(path).parent_path();
+    if (dir.empty()) return true;
+    std::error_code ec;
+    if (std::filesystem::exists(dir, ec)) return std::filesystem::is_directory(dir, ec);
+    std::filesystem::create_directories(dir, ec);
+    return !ec;
   }
 
   void QuadIndex::query(const float *r, std::vector<uint32_t> &hits) const {

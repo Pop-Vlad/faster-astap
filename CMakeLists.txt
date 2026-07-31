@@ -94,6 +94,10 @@ endif ()
 add_executable(astap_solve src/main.cpp)
 target_link_libraries(astap_solve PRIVATE astap_solver)
 
+# The index method, same options and same .ini/.wcs output as astap_solve.
+add_executable(astap_index_solve src/index_main.cpp)
+target_link_libraries(astap_index_solve PRIVATE astap_solver)
+
 enable_testing()
 add_executable(solver_tests tests/solver_tests.cpp)
 target_link_libraries(solver_tests PRIVATE astap_solver)
@@ -101,6 +105,9 @@ add_test(NAME solver_tests COMMAND solver_tests)
 
 add_executable(quad_index_bench tests/quad_index_bench.cpp)
 target_link_libraries(quad_index_bench PRIVATE astap_solver)
+
+add_executable(corpus_harness tools/corpus_harness.cpp)
+target_link_libraries(corpus_harness PRIVATE astap_solver)
 
 add_executable(quad_batch_tests tests/quad_batch_tests.cpp)
 target_link_libraries(quad_batch_tests PRIVATE astap_solver)

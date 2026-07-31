@@ -2,10 +2,10 @@
 // See docs/index_solver.md.
 //
 // The matching front end is new — one pass over the image quads against a
-// whole-sky index, then a vote on scale and position — but the back end is the
-// port's: the same overdetermined system solved by `lsq_fit`, the same
-// acceptance checks, so a solution has to clear the same bar the reference
-// implementation sets.
+// whole-sky index, a joint vote on scale and position, then a RANSAC consensus
+// — but the back end is the port's: the same overdetermined system solved by
+// `lsq_fit`, the same acceptance checks, so a solution has to clear the same bar
+// the reference implementation sets.
 
 #pragma once
 
@@ -17,18 +17,36 @@
 
 namespace astap {
   struct IndexSolveSettings {
-    double quad_tolerance = 0.007;
+    // The matching tolerance is deliberately absent: it belongs to the
+    // QuadIndex, which is binned by it and is only valid for the value it was
+    // built with.
+
     // Minimum surviving quads. The port uses 3 + nrstars_image/140; 3 gives the
     // three quad centres that are the bare minimum for the fit.
     int minimum_quads = 3;
-    // Scale votes are histogrammed in log space with this bin width, so 0.01 is
-    // one percent of plate scale.
+    // Votes are cast into (log scale, sky cell) buckets. This is the log-space
+    // bin width, so 0.01 is one percent of plate scale.
     double scale_bin = 0.01;
-    // Sky cells for the position vote, in degrees.
-    double sky_cell_deg = 1.0;
-    // How many position peaks to try before giving up. The best cell is not
-    // always the right one when the vote is thin.
-    int top_k = 5;
+    // Sky cell size for the position vote, in degrees. 0 derives it from the
+    // image: a cell has to be at least as large as the field, or a field spread
+    // across several cells splits its own vote.
+    double sky_cell_deg = 0;
+    // How many vote peaks to verify. A peak is cheap to reject, so this is
+    // generous; the joint vote makes the true peak rank highly but not always
+    // first.
+    int top_k = 40;
+
+    // --- RANSAC verification -------------------------------------------------
+    // A pair is an inlier when the model puts its image quad centre within this
+    // many pixels of its database quad centre.
+    double inlier_tolerance_px = 4.0;
+    // Consensus needed before a candidate position is fitted at all. Two pairs
+    // define the model, so this is the number of independent confirmations plus
+    // two.
+    int min_inliers = 4;
+    // Minimal samples drawn per candidate. Small clusters are enumerated
+    // exhaustively and never reach this.
+    int max_samples = 3000;
   };
 
   struct IndexSolveResult {
@@ -43,11 +61,30 @@ namespace astap {
 
     int nr_matches = 0;     // candidate pairs from the index
     int nr_references = 0;  // pairs used in the final fit
+    int nr_inliers = 0;     // consensus size the fit was built from
+    int peaks_tried = 0;    // vote peaks verified before one passed
     double scale_arcsec_px = 0;
+    double tier_density = 0;  // depth tier that produced the solution
+    int tiers_tried = 0;
   };
 
   // `image_quads` comes from find_quads on the detected stars, in image pixel
   // coordinates. `width`/`height` are the dimensions those coordinates refer to.
   IndexSolveResult solve_with_index(const QuadIndex &index, const RowList &image_quads, int width,
                                     int height, const IndexSolveSettings &s = {});
+
+  // Solves against a ladder of depth tiers (see build_tiers). One index commits
+  // to one depth, and a quad is only findable when all four of its stars were
+  // bright enough to be detected, so a single tier can only solve images within
+  // about a factor of two of its own density. The spiral search adapts its depth
+  // at every position; sweeping the ladder is how the index solver earns the
+  // same range back.
+  //
+  // `density_hint` is the image's detected stars per square degree when the
+  // caller knows the field size; it only reorders the sweep, so a wrong hint
+  // costs time rather than a solution. A tier that reaches a strong consensus
+  // ends the sweep; otherwise the best consensus across all tiers wins.
+  IndexSolveResult solve_with_tiers(const std::vector<QuadIndex> &tiers, const RowList &image_quads,
+                                    int width, int height, const IndexSolveSettings &s = {},
+                                    double density_hint = 0);
 } // namespace astap

@@ -1,0 +1,395 @@
+// Command line front end for the index solver, alongside astap_solve.
+//
+// The two binaries take the same options and write the same .ini and .wcs, so
+// one can be swapped for the other. What differs is what happens in between:
+// astap_solve walks a squared spiral over the sky, rebuilding database quads at
+// every position; this one queries a pre-built whole-sky quad index and votes.
+//
+// The index is a ladder of depth tiers (see docs/index_solver.md). Building it
+// takes a few seconds and the result is the same for every image and every run,
+// so it is cached under ~/.cache/faster-astap and reused. The first run on a new
+// star database pays for the build; later runs do not.
+
+#include <chrono>
+#include <cstdlib>
+#include <cstring>
+#include <fstream>
+#include <iostream>
+#include <map>
+#include <string>
+#include <vector>
+
+#include "astap/astro_math.h"
+#include "astap/fits.h"
+#include "astap/index_solver.h"
+#include "astap/parallel.h"
+#include "astap/quad_index.h"
+#include "astap/quads.h"
+#include "astap/solver.h"
+#include "astap/star_detection.h"
+
+using Clock = std::chrono::steady_clock;
+
+namespace {
+  double secs(Clock::time_point a, Clock::time_point b) {
+    return std::chrono::duration<double>(b - a).count();
+  }
+
+  std::string change_file_ext(const std::string &path, const std::string &ext) {
+    size_t slash = path.find_last_of("/\\");
+    size_t dot = path.find_last_of('.');
+    if (dot == std::string::npos || (slash != std::string::npos && dot < slash)) return path + ext;
+    return path.substr(0, dot) + ext;
+  }
+
+  std::string dir_of(const std::string &path) {
+    size_t slash = path.find_last_of("/\\");
+    return slash == std::string::npos ? std::string("./") : path.substr(0, slash + 1);
+  }
+
+  // The default depth ladder. One tier reaches about a factor of two in image
+  // star density either side of itself, so a ratio of 2.5 between rungs covers
+  // 0.2 to 2000 stars/deg^2 continuously. Measured over the corpus, an image
+  // whose density falls between two rungs is solved by one of them.
+  const std::vector<double> kDefaultLadder = {0.5, 1, 2, 4, 8, 16, 32, 60, 125, 250, 500, 900};
+
+  std::vector<double> parse_densities(const std::string &v) {
+    std::vector<double> out;
+    size_t p = 0;
+    while (p <= v.size()) {
+      const size_t c = v.find(',', p);
+      const std::string tok = v.substr(p, c == std::string::npos ? std::string::npos : c - p);
+      if (!tok.empty()) out.push_back(std::atof(tok.c_str()));
+      if (c == std::string::npos) break;
+      p = c + 1;
+    }
+    return out;
+  }
+
+  bool same_ladder(const std::vector<double> &a, const std::vector<double> &b) {
+    if (a.size() != b.size()) return false;
+    for (size_t i = 0; i < a.size(); i++)
+      if (std::fabs(a[i] - b[i]) > 1e-9 * std::max(1.0, std::fabs(a[i]))) return false;
+    return true;
+  }
+
+  void print_usage() {
+    std::cout
+        << "ASTAP astrometric solver, index method (C++)\n"
+        "Original algorithm (C) 2018-2026 by Han Kleijn. License MPL 2.0, www.hnsky.org\n"
+        "\n"
+        "Solves against a pre-built whole-sky quad index instead of a spiral search.\n"
+        "The index is cached under ~/.cache/faster-astap and built on first use.\n"
+        "\n"
+        "Usage:\n"
+        "-f   filename {FITS file. May be repeated, or list files after the options}\n"
+        "-d   path {path to the star database, needed to build an index}\n"
+        "-D   abbreviation[d80,d50,...] {select a star database}\n"
+        "-fov diameter_field[degrees] {orders the depth sweep, does not restrict it}\n"
+        "-s   max_number_of_stars {default 500}\n"
+        "-t   quad_tolerance {default 0.007. A cache belongs to one tolerance}\n"
+        "-m   minimum_star_size[\"] {default 1.5, applied only with -fov}\n"
+        "-z   downsample_factor[0,1,2,3,4,..] {0 for auto selection}\n"
+        "-o   file {name the output files with this base path & file name}\n"
+        "-wcs {write a .wcs file in the FITS header format}\n"
+        "-log {write the solver log to a .log text file}\n"
+        "-progress {log all progress steps and messages}\n"
+        "-threads N {worker threads, 0 or omitted = one per available hardware thread}\n"
+        "\n"
+        "Index options:\n"
+        "-i     file {index cache to use, overriding the default location}\n"
+        "-tiers d1,d2,.. {depth ladder in stars/deg^2 for a newly built index}\n"
+        "-rebuild {rebuild the index even when a usable cache exists}\n"
+        "-nocache {build in memory, do not read or write a cache}\n"
+        "-cacheinfo {report the cache that would be used, then exit}\n"
+        "\n"
+        "The solver result is written to filename.ini and, with -wcs, to filename.wcs.\n"
+        "\n"
+        "Exit status: 0 no errors, 1 no solution, 2 not enough stars detected,\n"
+        "16 error reading the image file, 32 no star database found,\n"
+        "33 error reading the star database.\n";
+  }
+
+  // Mono, binned copy of the image, plus the binning factor that produced it.
+  //
+  // Binning past about 1200 px on the long side throws away the stars the solve
+  // depends on, so the automatic factor stops there. The index solver works on
+  // this copy, and its solution is scaled back to original pixels afterwards.
+  int bin_mono(const astap::ImageArray &img, int width, int height, int forced,
+               astap::ImageArray &out) {
+    int bin = forced;
+    if (bin <= 0) {
+      bin = 1;
+      while (std::max(width, height) / (bin + 1) >= 1200) bin++;
+    }
+    out = astap::ImageArray(1, height / bin, width / bin);
+    for (int y = 0; y < out.height(); y++)
+      for (int x = 0; x < out.width(); x++) {
+        double v = 0;
+        for (int c = 0; c < img.colours(); c++)
+          for (int i = 0; i < bin; i++)
+            for (int j = 0; j < bin; j++) v += img.at(c, y * bin + i, x * bin + j);
+        out.at(0, y, x) = static_cast<float>(v / (img.colours() * bin * bin));
+      }
+    return bin;
+  }
+
+  // The index solver returns a WCS in binned pixels. Binned pixel xb covers
+  // original pixels [xb*bin, xb*bin+bin), so its centre sits at
+  // xb*bin + (bin-1)/2 in original zero-based coordinates. Rewriting the
+  // solution in those coordinates is a scale of the pixel size and a shift of
+  // the reference pixel; the rotation is unchanged.
+  void scale_solution_to_original(const astap::IndexSolveResult &r, int bin, astap::Header &head) {
+    head.ra0 = r.ra0;
+    head.dec0 = r.dec0;
+    head.crpix1 = (r.crpix1 - 1) * bin + (bin - 1) / 2.0 + 1;
+    head.crpix2 = (r.crpix2 - 1) * bin + (bin - 1) / 2.0 + 1;
+    head.cdelt1 = r.cdelt1 / bin;
+    head.cdelt2 = r.cdelt2 / bin;
+    head.crota1 = r.crota1;
+    head.crota2 = r.crota2;
+    head.cd1_1 = r.cd1_1 / bin;
+    head.cd1_2 = r.cd1_2 / bin;
+    head.cd2_1 = r.cd2_1 / bin;
+    head.cd2_2 = r.cd2_2 / bin;
+  }
+} // namespace
+
+int main(int argc, char **argv) {
+  if (argc == 1 || std::strcmp(argv[1], "-h") == 0 || std::strcmp(argv[1], "--help") == 0) {
+    print_usage();
+    return 0;
+  }
+
+  std::map<std::string, std::string> opt;
+  std::vector<std::string> images;
+  std::string cmdline;
+  for (int i = 0; i < argc; i++) {
+    if (i) cmdline += " ";
+    cmdline += argv[i];
+  }
+  for (int i = 1; i < argc; i++) {
+    std::string a = argv[i];
+    if (a.empty() || a[0] != '-') {
+      images.push_back(a); // bare file name, so a shell glob can be passed
+      continue;
+    }
+    std::string key = a.substr(1);
+    if (i + 1 < argc && argv[i + 1][0] != '-') {
+      if (key == "f") images.push_back(argv[i + 1]);
+      else opt[key] = argv[i + 1];
+      i++;
+    } else {
+      opt[key] = ""; // flag without a value
+    }
+  }
+
+  auto has = [&](const char *k) { return opt.count(k) != 0; };
+  auto val = [&](const char *k) { return opt[k]; };
+
+  const bool want_log = has("log");
+  const bool progress = has("progress");
+  std::vector<std::string> log_lines;
+  astap::LogFn log = [&](const std::string &s) {
+    std::cout << s << std::endl;
+    if (want_log) log_lines.push_back(s);
+  };
+
+  if (has("threads")) astap::set_thread_count((unsigned) std::atoi(val("threads").c_str()));
+
+  const double tolerance = has("t") ? std::atof(val("t").c_str()) : 0.007;
+  const int max_stars = has("s") ? std::atoi(val("s").c_str()) : 500;
+  const double min_star_size = has("m") ? std::atof(val("m").c_str()) : 1.5;
+  const int forced_bin = has("z") ? std::atoi(val("z").c_str()) : 0;
+  const double fov = has("fov") ? std::atof(val("fov").c_str()) : 0;
+  const std::vector<double> ladder =
+      has("tiers") ? parse_densities(val("tiers")) : kDefaultLadder;
+
+  // --- locate the star database ---------------------------------------------
+  const std::string dbpath = has("d") ? val("d") + "/" : dir_of(argv[0]);
+  astap::StarDatabase db;
+  const bool have_db = db.select(dbpath, has("D") ? val("D") : "auto", 1.0);
+
+  // --- resolve the index cache ----------------------------------------------
+  const bool nocache = has("nocache");
+  std::string cache = has("i") ? val("i")
+                               : astap::default_index_cache_path(have_db ? db.name() : "unknown",
+                                                                 have_db ? db.database_type() : 0,
+                                                                 tolerance);
+  if (has("cacheinfo")) {
+    std::cout << "star database: " << (have_db ? db.name() : "(none found in " + dbpath + ")")
+              << "\nindex cache:   " << cache << "\n";
+    astap::QuadIndexFile info;
+    std::string err;
+    if (astap::read_index_file_header(cache, info, &err)) {
+      std::cout << "               present, " << info.densities.size() << " tiers, tolerance "
+                << info.quad_tolerance << ", " << info.bytes / 1e9 << " GB\n               tiers:";
+      for (double d : info.densities) std::cout << " " << d;
+      std::cout << "\n";
+    } else {
+      std::cout << "               " << err << "\n";
+    }
+    return 0;
+  }
+
+  if (images.empty()) {
+    print_usage();
+    return 0;
+  }
+
+  // --- get an index ----------------------------------------------------------
+  std::vector<astap::QuadIndex> tiers;
+  auto t0 = Clock::now();
+  std::string err;
+  bool loaded = false;
+  if (!nocache && !has("rebuild")) {
+    astap::QuadIndexFile info;
+    if (astap::read_index_file_header(cache, info, &err)) {
+      // A cache is only usable when it was built the way this run would build
+      // it. Anything else is rebuilt rather than silently half-used.
+      if (std::fabs(info.quad_tolerance - tolerance) > 1e-12)
+        log("Index cache was built at tolerance " + astap::float_to_str(info.quad_tolerance, 4) +
+            ", rebuilding at " + astap::float_to_str(tolerance, 4) + ".");
+      else if (!same_ladder(info.densities, ladder))
+        log("Index cache holds a different depth ladder, rebuilding.");
+      else if (astap::load_index_file(cache, tiers, 0, 0, &err))
+        loaded = true;
+      else
+        log("Index cache unusable (" + err + "), rebuilding.");
+    }
+  }
+
+  if (loaded) {
+    log("Index: " + std::to_string(tiers.size()) + " tiers read from " + cache + " in " +
+        astap::float_to_str(secs(t0, Clock::now()), 2) + " sec.");
+  } else {
+    if (!have_db) {
+      log("No star database found in " + dbpath);
+      for (const std::string &f : images) {
+        astap::Header head;
+        astap::write_ini(change_file_ext(has("o") ? val("o") : f, ".ini"), false, head, cmdline,
+                         astap::kErrNoStarDatabase, "");
+      }
+      return astap::kErrNoStarDatabase;
+    }
+    astap::QuadIndexSettings qs;
+    qs.quad_tolerance = tolerance;
+    if (progress) log("Building the index ladder from " + db.name() + ", this happens once.");
+    if (!astap::build_tiers(db, qs, ladder, tiers)) {
+      log("Could not read the star database in " + dbpath);
+      return astap::kErrStarDatabaseRead;
+    }
+    size_t nq = 0;
+    for (const astap::QuadIndex &ix : tiers) nq += ix.size();
+    log("Index: " + std::to_string(tiers.size()) + " tiers, " + std::to_string(nq) +
+        " quads, built in " + astap::float_to_str(secs(t0, Clock::now()), 2) + " sec.");
+    if (!nocache) {
+      if (astap::ensure_parent_directory(cache) && astap::save_index_file(cache, tiers))
+        log("Cached to " + cache);
+      else
+        log("Warning: could not write the index cache to " + cache);
+    }
+  }
+
+  // --- solve ------------------------------------------------------------------
+  int worst = 0;
+  for (const std::string &filename : images) {
+    astap::Header head;
+    astap::ImageArray img;
+    const astap::FitsLoadResult r = astap::load_fits(filename, head, img);
+    const std::string out_base = has("o") ? val("o") : filename;
+    if (!r.ok) {
+      log(r.error);
+      astap::write_ini(change_file_ext(out_base, ".ini"), false, head, cmdline,
+                       astap::kErrImageRead, "");
+      worst = std::max(worst, static_cast<int>(astap::kErrImageRead));
+      continue;
+    }
+
+    astap::ImageArray small;
+    const int bin = bin_mono(img, head.width, head.height, forced_bin, small);
+
+    // A star size in arcseconds only means something once the plate scale is
+    // known, which a blind solve does not have. With -fov it does.
+    double hfd_min = 0.8;
+    if (fov > 0) {
+      const double arcsec_per_px = fov * 3600 / head.height;
+      hfd_min = std::max(0.8, min_star_size / (bin * arcsec_per_px));
+    }
+
+    astap::Header bhead = head;
+    astap::Histogram hist;
+    astap::get_background(0, small, bhead, true, true, max_stars, hist);
+    astap::RowList stars;
+    double mean_hfd = 0;
+    astap::find_stars(small, bhead, hfd_min, max_stars, stars, mean_hfd,
+                      progress ? log : astap::LogFn());
+    if (stars.count() < 4) {
+      log("Not enough stars detected in " + filename);
+      astap::write_ini(change_file_ext(out_base, ".ini"), false, head, cmdline,
+                       astap::kErrNotEnoughStars, "");
+      worst = std::max(worst, static_cast<int>(astap::kErrNotEnoughStars));
+      continue;
+    }
+
+    astap::RowList quads;
+    astap::find_quads(static_cast<int>(stars.count()), stars, quads);
+    if (progress)
+      log("Image: " + std::to_string(stars.count()) + " stars, " + std::to_string(quads.count()) +
+          " quads, binning " + std::to_string(bin));
+
+    // The tier sweep is ordered by the image's star density when the field size
+    // is known; without -fov every tier is tried, cheapest first.
+    double density_hint = 0;
+    if (fov > 0) {
+      const double w_deg = fov * head.width / head.height;
+      density_hint = stars.count() / std::max(1e-9, fov * w_deg);
+    }
+
+    const auto s0 = Clock::now();
+    astap::IndexSolveResult res =
+        astap::solve_with_tiers(tiers, quads, small.width(), small.height(), {}, density_hint);
+    const double elapsed = secs(s0, Clock::now());
+
+    if (!res.solved) {
+      log("No solution for " + filename + " (" + res.reason + ", " +
+          std::to_string(res.nr_matches) + " candidate quads)");
+      astap::write_ini(change_file_ext(out_base, ".ini"), false, head, cmdline, astap::kErrNone,
+                       "");
+      worst = std::max(worst, 1);
+      continue;
+    }
+
+    scale_solution_to_original(res, bin, head);
+    log("Solution found: " + astap::prepare_ra(head.ra0, ": ") + " " +
+        astap::prepare_dec(head.dec0, "d "));
+    log("Solved in " + astap::float_to_str(elapsed, 3) + " sec. Scale " +
+        astap::float_to_str(std::fabs(head.cdelt2) * 3600, 4) + "\"/px, rotation " +
+        astap::float_to_str(head.crota2, 2) + "d, " + std::to_string(res.nr_inliers) +
+        " quads at depth tier " + astap::float_to_str(res.tier_density, 1) + " stars/deg^2 (" +
+        std::to_string(res.tiers_tried) + " tiers tried).");
+
+    astap::write_ini(change_file_ext(out_base, ".ini"), true, head, cmdline, astap::kErrNone, "");
+
+    if (has("wcs")) {
+      const std::string comment = "Solved in " + astap::float_to_str(elapsed, 3) +
+                                  " sec by the index method.";
+      astap::SipCoefficients no_sip;
+      astap::update_solution_cards(head.cards, head, no_sip, true, comment);
+      astap::remove_key(head.cards, "NAXIS1  =");
+      astap::remove_key(head.cards, "NAXIS2  =");
+      astap::update_integer(head.cards, "NAXIS   =",
+                            " / Minimal header                                 ", 0);
+      astap::update_integer(head.cards, "BITPIX  =",
+                            " /                                                ", 8);
+      astap::write_fits_header_file(change_file_ext(out_base, ".wcs"), head.cards);
+    }
+  }
+
+  if (want_log) {
+    std::ofstream lf(change_file_ext(has("o") ? val("o") : images.front(), ".log"));
+    lf << cmdline << "\n";
+    for (const std::string &l : log_lines) lf << l << "\n";
+  }
+  return worst;
+}

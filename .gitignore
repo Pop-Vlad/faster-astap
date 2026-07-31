@@ -7,3 +7,7 @@ build/
 .idea/
 build-acpp
 build-sycl
+
+# Survey cutouts, refetch with tools/fetch_skyview_corpus.py
+corpus/*.fits
+corpus/manifest.csv
