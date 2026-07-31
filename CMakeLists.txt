@@ -9,8 +9,12 @@ if (NOT CMAKE_BUILD_TYPE)
     set(CMAKE_BUILD_TYPE Release CACHE STRING "" FORCE)
 endif ()
 
+set(THREADS_PREFER_PTHREAD_FLAG ON)
+find_package(Threads REQUIRED)
+
 add_library(astap_solver
         src/astro_math.cpp
+        src/parallel.cpp
         src/calc_trans_cubic.cpp
         src/fits.cpp
         src/matching.cpp
@@ -20,6 +24,7 @@ add_library(astap_solver
         src/solver.cpp
 )
 target_include_directories(astap_solver PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
+target_link_libraries(astap_solver PUBLIC Threads::Threads)
 
 if (CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
     target_compile_options(astap_solver PRIVATE -Wall -Wextra)

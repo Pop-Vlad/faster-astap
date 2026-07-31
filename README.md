@@ -45,6 +45,7 @@ position for maximum accuracy.
 | `star_database.{h,cpp}`    | `.290` / `.1476` / `.001` database reader, tile selection                                      |
 | `calc_trans_cubic.{h,cpp}` | cubic fit behind the SIP coefficients                                                          |
 | `solver.{h,cpp}`           | `Solver::solve` — spiral search, WCS derivation, `.ini` / `.wcs` output                        |
+| `parallel.{h,cpp}`         | thread pool and range splitting used by the parallel stages                                    |
 | `src/main.cpp`             | command line front end, modelled on `astap_command_line.lpr`                                   |
 
 ## Build
@@ -82,6 +83,7 @@ astap_solve -f image.fits [options]
 -wcs     also write a .wcs file in the FITS header format
 -log     write the solver log to a .log file
 -progress  log every search step
+-threads N   worker threads; omitted or 0 = one per available hardware thread
 ```
 
 The solution is written to `<output>.ini` (and `<output>.wcs` with `-wcs`), in
@@ -113,6 +115,76 @@ End to end, the port was compared against `astap_cli` 2026.05.18 on the
 
 The residual differences come from a slightly different set of detected stars
 (127 vs 124 at the same settings), not from the geometry.
+
+## Performance
+
+Measured on the sample above (6020×4015, D80 database) on a 13600K, 14 cores /
+20 hardware threads. Every optimisation below was checked to produce a
+**bit-identical** solution to the unoptimised port, at every thread count.
+
+|                                              | blind (`-fov 0 -r 180`) | hinted (`-fov 0.72 -z 3 -r 5`) |
+|----------------------------------------------|-------------------------|--------------------------------|
+| first working port                           | 11.92 s                 | 0.228 s                        |
+| single threaded, after the algorithmic fixes | 9.07 s                  | 0.181 s                        |
+| default (20 threads)                         | **2.1 s**               | **0.162 s**                    |
+
+A blind solve and a hinted solve stress completely different code. `perf` on the
+original port:
+
+* blind — `find_many_quads` 47%, `find_quads` 16%, `StarDatabase::read_star` 15%:
+  the spiral search rebuilds the database quads at every sky position.
+* hinted — `load_fits` 49%, `bin_mono_and_crop` 16%: the image never gets read
+  more than once, so ingest dominates.
+
+What was changed:
+
+1. **`find_many_quads` distance table.** All C(7,4) = 35 quads of a group are
+   built from the same 7 stars, so their six side lengths are a subset of the
+   group's 21 pairwise distances. Computing those once per star instead of six
+   per quad cuts 210 square roots per star down to 21. 172 → 56 µs per call at
+   60 database stars.
+2. **Duplicate quad rejection in O(1).** The original scans every quad found so
+   far. A uniform grid with cell size 1.0 gives the *same* answer — two centres
+   with |dx| < 1 and |dy| < 1 are at most one cell apart, so probing the 3×3
+   neighbourhood is exactly equivalent. The grid is two flat arrays (bucket
+   heads plus a next-index chain) reused across calls; a first attempt using a
+   vector per bucket was *slower* than the linear scan it replaced, because this
+   runs once per spiral position.
+3. **Parallel spiral search**, the main win for blind solves. Positions are
+   evaluated in batches; the lowest index that solves wins. That is exactly what
+   the sequential search returns, since it stops at the first solving position
+   and batches are generated in spiral order. Each worker has its own database
+   file handle, tile cache and match state. The batch starts at one position and
+   grows, so a solve that succeeds immediately never pays for a parallel batch.
+4. **`load_fits`**: the per-pixel `switch (BITPIX)` is hoisted out of the pixel
+   loop and a whole plane is read at once, which lets the byte swap vectorise;
+   the conversion then runs in parallel. `measured_max` is a max-reduction, so
+   it is order independent. The one order-dependent case — a NaN taking the
+   running maximum — is detected and redone sequentially.
+5. **`bin_mono_and_crop`**: restructured so each source row is walked once,
+   sequentially, with a row accumulator. Every output pixel still sums its
+   inputs in the original order (colour, row, column), so the result is
+   unchanged. Parallel over output rows.
+6. **`get_hist`**: per-thread partial histograms. The pixel sum is accumulated
+   as `int64` rather than `double`, which is both exact and independent of the
+   thread count.
+7. **Allocation removal in the inner loops**: `hfd()` sorted its background
+   annulus through a heap-allocated copy on every star candidate (now in place
+   on the stack, as the Pascal does), and the sigma-clipped mean reallocated a
+   65500-bin histogram per image tile.
+
+Thread scaling, blind solve:
+
+| threads | 1    | 2    | 4    | 8    | 14   | 20   |
+|---------|------|------|------|------|------|------|
+| seconds | 9.07 | 5.90 | 4.29 | 2.86 | 2.44 | 2.09 |
+
+The default is one thread per thread the process may actually run on,
+SMT siblings included — the spiral search gives every sibling independent work,
+so the last step from 14 to 20 threads is still worth about 14%. The count comes
+from the CPU affinity mask rather than from the size of the machine, so it stays
+correct under `taskset`, inside a container, or on a batch scheduler that pins
+jobs to a subset of the CPUs. `-threads N` overrides it.
 
 ## Scope
 

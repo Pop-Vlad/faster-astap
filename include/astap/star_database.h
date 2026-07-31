@@ -39,6 +39,14 @@ namespace astap {
     int database_type() const { return database_type_; }
     const std::string &name() const { return name_database_; }
 
+    // Adopt an already made selection, so several reader instances can share one
+    // choice while keeping their own file handle and cache.
+    void configure(const std::string &database_path, const std::string &name, int type) {
+      database_path_ = database_path;
+      name_database_ = name;
+      database_type_ = type;
+    }
+
     // Find up to four database areas covering the square image. `fov` is in
     // radians and must stay below the tile size (9.53 degrees for .290 files,
     // 5.14 degrees for .1476 files), otherwise a tile beyond the next one could

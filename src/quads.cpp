@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstdint>
 #include <vector>
 
 #include "astap/astro_math.h"
@@ -162,8 +163,45 @@ namespace astap {
     size_t nrquads = 0;
     quads.resize(8, nrstars * static_cast<size_t>(num_quads_per_group));
 
-    std::vector<long> closest_indices(static_cast<size_t>(num_closest));
-    std::vector<double> closest_distances(static_cast<size_t>(num_closest));
+    // Duplicate rejection. The original scans every quad found so far, which is
+    // O(quads^2) overall and dominates the run time of a blind solve. A uniform
+    // grid with a cell size of one gives the same answer in O(1): two centres
+    // that satisfy |dx| < 1 and |dy| < 1 can never be more than one cell apart,
+    // so probing the 3x3 neighbourhood finds exactly the same duplicates as the
+    // linear scan.
+    //
+    // The grid is two flat arrays holding a chain per bucket (heads + next), not
+    // a bucket of vectors: this routine is called once per spiral position, and
+    // per-bucket heap allocation costs far more than the scan it replaces.
+    // The buffers are kept per thread and reused across calls.
+    static thread_local std::vector<int32_t> heads;
+    static thread_local std::vector<int32_t> next_of;
+    size_t bucket_count = 64;
+    // Size against the number of quads, not stars, to keep the chains short.
+    while (bucket_count < nrstars * static_cast<size_t>(num_quads_per_group))
+      bucket_count <<= 1; // power of two, so & instead of %
+    const size_t bucket_mask = bucket_count - 1;
+    heads.assign(bucket_count, -1);
+    next_of.resize(nrstars * static_cast<size_t>(num_quads_per_group));
+
+    auto cell_of = [bucket_mask](long gx, long gy) {
+      // Any well spread 2D -> 1D mix works; correctness comes from probing the
+      // neighbouring cells, not from the hash.
+      return static_cast<size_t>(static_cast<unsigned long>(gx) * 73856093UL ^
+                                 static_cast<unsigned long>(gy) * 19349663UL) &
+             bucket_mask;
+    };
+
+    // num_closest is at most 7, so these live on the stack. The original
+    // allocated two vectors per call, which is measurable when the routine runs
+    // once per spiral position.
+    long closest_indices[8];
+    double closest_distances[8];
+    // Pairwise distances within the group of `num_closest` stars, indexed
+    // [a * num_closest + b]. All C(n,4) quads of a group draw their six distances
+    // from this table, so each distance is computed once per group instead of
+    // once per quad: 21 square roots per star instead of 35 * 6 = 210.
+    double group_dist[8 * 8];
 
     const double *StarsX = starlist.data(0);
     const double *StarsY = starlist.data(1);
@@ -206,47 +244,54 @@ namespace astap {
 
       if (closest_indices[static_cast<size_t>(num_closest - 1)] == -1) continue;
 
+      // Group member coordinates and their pairwise distances, computed once.
+      double gxs[8], gys[8];
+      for (int a = 0; a < num_closest; a++) {
+        gxs[a] = StarsX[closest_indices[a]];
+        gys[a] = StarsY[closest_indices[a]];
+      }
+      for (int a = 0; a < num_closest; a++)
+        for (int b = a + 1; b < num_closest; b++) {
+          const double dx = gxs[a] - gxs[b];
+          const double dy = gys[a] - gys[b];
+          group_dist[a * 8 + b] = std::sqrt(dx * dx + dy * dy);
+        }
+
       for (int q = 0; q < num_quads_per_group; q++) {
-        double x1q = StarsX[closest_indices[static_cast<size_t>(quad_indices[q][0])]];
-        double y1q = StarsY[closest_indices[static_cast<size_t>(quad_indices[q][0])]];
-        double x2 = StarsX[closest_indices[static_cast<size_t>(quad_indices[q][1])]];
-        double y2 = StarsY[closest_indices[static_cast<size_t>(quad_indices[q][1])]];
-        double x3 = StarsX[closest_indices[static_cast<size_t>(quad_indices[q][2])]];
-        double y3 = StarsY[closest_indices[static_cast<size_t>(quad_indices[q][2])]];
-        double x4 = StarsX[closest_indices[static_cast<size_t>(quad_indices[q][3])]];
-        double y4 = StarsY[closest_indices[static_cast<size_t>(quad_indices[q][3])]];
+        const int i0 = quad_indices[q][0], i1 = quad_indices[q][1];
+        const int i2 = quad_indices[q][2], i3 = quad_indices[q][3];
+
+        double x1q = gxs[i0], y1q = gys[i0];
+        double x2 = gxs[i1], y2 = gys[i1];
+        double x3 = gxs[i2], y3 = gys[i2];
+        double x4 = gxs[i3], y4 = gys[i3];
 
         double xt = (x1q + x2 + x3 + x4) * 0.25; // quad centre
         double yt = (y1q + y2 + y3 + y4) * 0.25;
 
+        const long gx = static_cast<long>(std::floor(xt));
+        const long gy = static_cast<long>(std::floor(yt));
         bool identical_quad = false;
-        for (size_t k = 0; k < nrquads; k++) {
-          if (std::fabs(xt - quads(6, k)) < 1 && std::fabs(yt - quads(7, k)) < 1) {
-            identical_quad = true;
-            break;
-          }
-        }
+        const double *qx = quads.data(6);
+        const double *qy = quads.data(7);
+        for (long dy = -1; dy <= 1 && !identical_quad; dy++)
+          for (long dx = -1; dx <= 1 && !identical_quad; dx++)
+            for (int32_t k = heads[cell_of(gx + dx, gy + dy)]; k >= 0; k = next_of[k]) {
+              if (std::fabs(xt - qx[k]) < 1 && std::fabs(yt - qy[k]) < 1) {
+                identical_quad = true;
+                break;
+              }
+            }
         if (identical_quad) continue;
 
-        double dx, dy;
-        dx = x1q - x2;
-        dy = y1q - y2;
-        double dist1 = std::sqrt(dx * dx + dy * dy);
-        dx = x1q - x3;
-        dy = y1q - y3;
-        double dist2 = std::sqrt(dx * dx + dy * dy);
-        dx = x1q - x4;
-        dy = y1q - y4;
-        double dist3 = std::sqrt(dx * dx + dy * dy);
-        dx = x2 - x3;
-        dy = y2 - y3;
-        double dist4 = std::sqrt(dx * dx + dy * dy);
-        dx = x2 - x4;
-        dy = y2 - y4;
-        double dist5 = std::sqrt(dx * dx + dy * dy);
-        dx = x3 - x4;
-        dy = y3 - y4;
-        double dist6 = std::sqrt(dx * dx + dy * dy);
+        // The quad index rows are ascending, so a < b holds for every pair below
+        // and the table lookup yields exactly the values the original computed.
+        double dist1 = group_dist[i0 * 8 + i1];
+        double dist2 = group_dist[i0 * 8 + i2];
+        double dist3 = group_dist[i0 * 8 + i3];
+        double dist4 = group_dist[i1 * 8 + i2];
+        double dist5 = group_dist[i1 * 8 + i3];
+        double dist6 = group_dist[i2 * 8 + i3];
 
         sort6_descending(dist1, dist2, dist3, dist4, dist5, dist6);
 
@@ -258,6 +303,11 @@ namespace astap {
         quads(5, nrquads) = dist6 / dist1;
         quads(6, nrquads) = xt;
         quads(7, nrquads) = yt;
+        {
+          const size_t b = cell_of(gx, gy);
+          next_of[nrquads] = heads[b];
+          heads[b] = static_cast<int32_t>(nrquads);
+        }
         nrquads++;
       }
     }

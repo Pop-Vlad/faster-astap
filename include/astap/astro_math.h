@@ -4,6 +4,7 @@
 #pragma once
 
 #include <cmath>
+#include <cstddef>
 #include <string>
 #include <vector>
 
@@ -28,8 +29,12 @@ namespace astap {
 
   // Median of the first `leng` values. The list is sorted in place, exactly like
   // the Pascal SMedian, so callers that still need the original order must pass a
-  // copy.
-  double smedian(std::vector<double> &list, size_t leng);
+  // copy. The pointer overload lets hot callers use a stack buffer.
+  double smedian(double *list, size_t leng);
+
+  inline double smedian(std::vector<double> &list, size_t leng) {
+    return smedian(list.data(), leng);
+  }
 
   // Angular separation, formula 9.1 (old Meeus) / 16.1 (new Meeus).
   void ang_sep(double ra1, double dec1, double ra2, double dec2, double &sep);

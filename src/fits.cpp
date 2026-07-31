@@ -7,6 +7,7 @@
 #include <vector>
 
 #include "astap/astro_math.h"
+#include "astap/parallel.h"
 
 namespace astap {
   namespace {
@@ -229,17 +230,13 @@ namespace astap {
 
     img.resize(head.naxis3, head.height, head.width);
 
-    std::vector<uint8_t> line(static_cast<size_t>(head.width) * bytes_per_pixel);
     float measured_max = 0;
 
-    auto read_line = [&]() -> bool {
-      f.read(reinterpret_cast<char *>(line.data()), static_cast<std::streamsize>(line.size()));
-      return f.gcount() == static_cast<std::streamsize>(line.size());
-    };
-
     if (rgb24) {
+      std::vector<uint8_t> line(static_cast<size_t>(head.width) * 3);
       for (int j = 0; j < head.height; j++) {
-        if (!read_line()) break;
+        f.read(reinterpret_cast<char *>(line.data()), static_cast<std::streamsize>(line.size()));
+        if (f.gcount() != static_cast<std::streamsize>(line.size())) break;
         for (int i = 0; i < head.width; i++) {
           img.at(0, j, i) = line[static_cast<size_t>(i) * 3 + 0];
           img.at(1, j, i) = line[static_cast<size_t>(i) * 3 + 1];
@@ -249,46 +246,122 @@ namespace astap {
       head.datamax_org = 255;
       head.bitpix = 8; // already converted to separate colour planes
     } else {
+      if (head.bitpix != 8 && head.bitpix != 16 && head.bitpix != 32 && head.bitpix != -32 &&
+          head.bitpix != -64) {
+        res.error = "Error, unsupported BITPIX!";
+        return res;
+      }
+
+      // One plane is read in a single call and converted afterwards. Reading row
+      // by row and branching on BITPIX per pixel, as the original does, prevents
+      // the compiler from vectorising the byte swap and costs roughly half of the
+      // total run time of a hinted solve.
+      const size_t plane_pixels = static_cast<size_t>(head.width) * head.height;
+      const size_t plane_bytes = plane_pixels * bytes_per_pixel;
+      std::vector<uint8_t> raw(plane_bytes);
+
+      // Converts the pixels [lo, hi) of `raw` into plane k. Reports the local
+      // maximum and whether a NaN was seen. Pure, so chunks may run in any order.
+      auto convert_range = [&](const uint8_t *base, float *dst, size_t lo, size_t hi, float &local_max,
+                               bool &saw_nan) {
+        float m = 0;
+        bool nan = false;
+        switch (head.bitpix) {
+          case 8:
+            for (size_t i = lo; i < hi; i++) {
+              const double col = base[i] * bscale + bzero;
+              dst[i] = static_cast<float>(col);
+              if (col > m) m = static_cast<float>(col);
+            }
+            break;
+          case 16:
+            for (size_t i = lo; i < hi; i++) {
+              const double col = static_cast<int16_t>(be16(base + i * 2)) * bscale + bzero;
+              dst[i] = static_cast<float>(col);
+              if (col > m) m = static_cast<float>(col);
+            }
+            break;
+          case 32:
+            for (size_t i = lo; i < hi; i++) {
+              const double col = static_cast<int32_t>(be32(base + i * 4)) * bscale + bzero;
+              dst[i] = static_cast<float>(col);
+              if (col > m) m = static_cast<float>(col);
+            }
+            break;
+          case -32:
+            for (size_t i = lo; i < hi; i++) {
+              uint32_t u = be32(base + i * 4);
+              float fv;
+              std::memcpy(&fv, &u, 4);
+              const double col = fv * bscale + bzero;
+              if (std::isnan(col)) {
+                nan = true;
+                continue; // the sequential pass fixes these up
+              }
+              dst[i] = static_cast<float>(col);
+              if (col > m) m = static_cast<float>(col);
+            }
+            break;
+          default: // -64
+            for (size_t i = lo; i < hi; i++) {
+              uint64_t u = be64(base + i * 8);
+              double dv;
+              std::memcpy(&dv, &u, 8);
+              const double col = dv * bscale + bzero;
+              if (std::isnan(col)) {
+                nan = true;
+                continue;
+              }
+              dst[i] = static_cast<float>(col);
+              if (col > m) m = static_cast<float>(col);
+            }
+            break;
+        }
+        local_max = m;
+        saw_nan = nan;
+      };
+
       for (int k = 0; k < head.naxis3; k++) {
         // all colours
-        for (int j = 0; j < head.height; j++) {
-          if (!read_line()) break;
-          for (int i = 0; i < head.width; i++) {
-            const uint8_t *p = line.data() + static_cast<size_t>(i) * bytes_per_pixel;
+        f.read(reinterpret_cast<char *>(raw.data()), static_cast<std::streamsize>(plane_bytes));
+        const size_t got = static_cast<size_t>(f.gcount());
+        const size_t pixels = std::min(plane_pixels, got / bytes_per_pixel);
+        float *dst = img.row(k, 0);
+
+        const unsigned chunks = range_chunks(pixels);
+        std::vector<float> maxima(std::max(1u, chunks), 0.0f);
+        std::vector<char> nans(std::max(1u, chunks), 0);
+        const float max_before_plane = measured_max;
+
+        parallel_ranges(0, pixels, [&](size_t lo, size_t hi, unsigned t) {
+          bool nan = false;
+          convert_range(raw.data(), dst, lo, hi, maxima[t], nan);
+          nans[t] = nan ? 1 : 0;
+        });
+
+        // max is order independent, so the reduction is exact.
+        for (float m: maxima) measured_max = std::max(measured_max, m);
+
+        // A NaN takes the value of the running maximum at that pixel, which does
+        // depend on the order. That is rare (very high floating point values in
+        // PS1 images), so redo the plane sequentially when it happens.
+        if (std::find(nans.begin(), nans.end(), 1) != nans.end()) {
+          measured_max = max_before_plane;
+          for (size_t i = 0; i < pixels; i++) {
             double col;
-            switch (head.bitpix) {
-              case 8:
-                col = p[0] * bscale + bzero;
-                break;
-              case 16:
-                col = static_cast<int16_t>(be16(p)) * bscale + bzero;
-                break;
-              case 32:
-                col = static_cast<int32_t>(be32(p)) * bscale + bzero;
-                break;
-              case -32: {
-                uint32_t u = be32(p);
-                float fv;
-                std::memcpy(&fv, &u, 4);
-                col = fv * bscale + bzero;
-                // Not a number, can happen in PS1 images with very high values.
-                if (std::isnan(col)) col = measured_max;
-                break;
-              }
-              case -64: {
-                uint64_t u = be64(p);
-                double dv;
-                std::memcpy(&dv, &u, 8);
-                col = dv * bscale + bzero;
-                if (std::isnan(col)) col = measured_max;
-                break;
-              }
-              default:
-                res.error = "Error, unsupported BITPIX!";
-                return res;
+            if (head.bitpix == -32) {
+              uint32_t u = be32(raw.data() + i * 4);
+              float fv;
+              std::memcpy(&fv, &u, 4);
+              col = fv * bscale + bzero;
+            } else {
+              uint64_t u = be64(raw.data() + i * 8);
+              double dv;
+              std::memcpy(&dv, &u, 8);
+              col = dv * bscale + bzero;
             }
-            img.at(k, j, i) = static_cast<float>(col);
-            // Find the maximum value, needed for images with a 0..1 scale.
+            if (std::isnan(col)) col = measured_max;
+            dst[i] = static_cast<float>(col);
             if (col > measured_max) measured_max = static_cast<float>(col);
           }
         }

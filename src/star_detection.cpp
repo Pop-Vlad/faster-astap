@@ -5,6 +5,7 @@
 #include <string>
 
 #include "astap/astro_math.h"
+#include "astap/parallel.h"
 
 namespace astap {
   namespace {
@@ -18,8 +19,6 @@ namespace astap {
 
     std::fill(hist.counts.begin(), hist.counts.end(), 0);
 
-    double total_value = 0;
-    int count = 1; // prevent divide by zero
     const int width5 = img.width();
     const int height5 = img.height();
 
@@ -27,19 +26,52 @@ namespace astap {
     const int offsetW = static_cast<int>(ptrunc(width5 * 0.042));
     const int offsetH = static_cast<int>(ptrunc(height5 * 0.015));
 
-    for (int i = offsetH; i <= height5 - 1 - offsetH; i++) {
-      const float *row = img.row(colour, i);
-      for (int j = offsetW; j <= width5 - 1 - offsetW; j++) {
-        int col = static_cast<int>(pround(row[j]));
-        if (col >= 1 && col < 65000) {
-          // ignore black overlap areas and bright stars
-          hist.counts[static_cast<size_t>(col)]++;
-          total_value += col;
-          count++;
-        }
-      }
+    const int first_row = offsetH;
+    const int last_row = height5 - 1 - offsetH;
+    if (last_row < first_row) {
+      hist.mean = 0;
+      return;
     }
-    hist.mean = static_cast<int>(pround(total_value / count));
+
+    // Per-thread partial histograms, combined afterwards. The counts are
+    // integers, and the pixel sum is accumulated as an integer as well (values
+    // are below 65000 and there are at most a few billion of them, so it stays
+    // exact), which makes the reduction independent of the thread count.
+    const unsigned chunks = std::max(1u, range_chunks(static_cast<size_t>(last_row - first_row + 1)));
+    std::vector<std::vector<int> > partial(chunks);
+    std::vector<int64_t> sums(chunks, 0);
+    std::vector<int64_t> counts(chunks, 0);
+
+    parallel_ranges(static_cast<size_t>(first_row), static_cast<size_t>(last_row) + 1,
+                    [&](size_t r0, size_t r1, unsigned t) {
+                      std::vector<int> &h = partial[t];
+                      h.assign(65536, 0);
+                      int64_t sum = 0, cnt = 0;
+                      for (size_t i = r0; i < r1; i++) {
+                        const float *row = img.row(colour, static_cast<int>(i));
+                        for (int j = offsetW; j <= width5 - 1 - offsetW; j++) {
+                          int col = static_cast<int>(pround(row[j]));
+                          // Ignore black overlap areas and bright stars.
+                          if (col >= 1 && col < 65000) {
+                            h[static_cast<size_t>(col)]++;
+                            sum += col;
+                            cnt++;
+                          }
+                        }
+                      }
+                      sums[t] = sum;
+                      counts[t] = cnt;
+                    });
+
+    int64_t total_value = 0;
+    int64_t count = 1; // prevent divide by zero
+    for (unsigned t = 0; t < chunks; t++) {
+      total_value += sums[t];
+      count += counts[t];
+      if (partial[t].empty()) continue;
+      for (size_t v = 1; v < 65000; v++) hist.counts[v] += partial[t][v];
+    }
+    hist.mean = static_cast<int>(pround(static_cast<double>(total_value) / count));
   }
 
   void get_background(int colour, const ImageArray &img, Header &head, bool calc_hist,
@@ -134,7 +166,11 @@ namespace astap {
   // Pascal: get_hist2, the sub section histogram used by the sigma clipped mean.
   static void get_hist2(const ImageArray &img, int startx, int stopx, int starty, int stopy,
                         int upperlimit, std::vector<int> &histogram) {
-    histogram.assign(static_cast<size_t>(upperlimit) + 1, 0);
+    // Reused across calls: this runs for every tile of the faint star pass, and
+    // the histogram spans 65500 bins.
+    if (histogram.size() < static_cast<size_t>(upperlimit) + 1)
+      histogram.resize(static_cast<size_t>(upperlimit) + 1);
+    std::fill(histogram.begin(), histogram.begin() + upperlimit + 1, 0);
     for (int i = starty; i <= stopy; i++) {
       const float *row = img.row(0, i);
       for (int j = startx; j <= stopx; j++) {
@@ -159,7 +195,7 @@ namespace astap {
     int currentLowerLimit = 0;
     int currentUpperLimit = upperlimit;
 
-    std::vector<int> histogram;
+    static thread_local std::vector<int> histogram;
     get_hist2(img, startx, stopx, starty, stopy, upperlimit, histogram);
 
     while (!converged && iteration < max_iterations) {
@@ -260,10 +296,11 @@ namespace astap {
         }
       }
 
-    std::vector<double> bg(background, background + counter);
-    double star_bg = smedian(bg, static_cast<size_t>(counter));
-    for (int i = 0; i < counter; i++) bg[static_cast<size_t>(i)] = std::fabs(background[i] - star_bg);
-    double mad_bg = smedian(bg, static_cast<size_t>(counter)); // median absolute deviation
+    // Sorted and rewritten in place, as the original does: this runs once per
+    // star candidate, so a heap allocation here is expensive.
+    double star_bg = smedian(background, static_cast<size_t>(counter));
+    for (int i = 0; i < counter; i++) background[i] = std::fabs(background[i] - star_bg);
+    double mad_bg = smedian(background, static_cast<size_t>(counter)); // median absolute deviation
     // Conversion from MAD to SD for a normal distribution.
     double sd_bg = mad_bg * 1.4826;
     // Add some value for images with a zero noise background, otherwise the

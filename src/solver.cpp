@@ -8,6 +8,7 @@
 
 #include "astap/astro_math.h"
 #include "astap/calc_trans_cubic.h"
+#include "astap/parallel.h"
 #include "astap/quads.h"
 
 namespace astap {
@@ -27,20 +28,34 @@ namespace astap {
     const int shiftY = static_cast<int>(pround(height5 * (1 - crop) / 2));
 
     const double norm = static_cast<double>(nrcolors) * binning * binning;
-    for (int fitsY = 0; fitsY < h; fitsY++) {
-      float *out = img2.row(0, fitsY);
-      const int y = shiftY + fitsY * binning;
-      for (int fitsX = 0; fitsX < w; fitsX++) {
-        const int x = shiftX + fitsX * binning;
-        double val = 0;
+
+    // The colour and row loops are outside the x loop so that each source row is
+    // walked once, sequentially. Every output pixel still accumulates its inputs
+    // in the original order (colour, then row, then column), so the result is bit
+    // identical to the straightforward nesting.
+    parallel_ranges(0, static_cast<size_t>(h), [&](size_t y0, size_t y1, unsigned) {
+      std::vector<double> acc(static_cast<size_t>(w));
+      for (size_t fitsY = y0; fitsY < y1; fitsY++) {
+        std::fill(acc.begin(), acc.end(), 0.0);
+        const int y = shiftY + static_cast<int>(fitsY) * binning;
         for (int k = 0; k < nrcolors; k++) // all colours, this makes the result mono
           for (int i = 0; i < binning; i++) {
-            const float *row = img.row(k, y + i);
-            for (int j = 0; j < binning; j++) val += row[x + j];
+            const float *row = img.row(k, y + i) + shiftX;
+            if (binning == 1) {
+              for (int fitsX = 0; fitsX < w; fitsX++) acc[fitsX] += row[fitsX];
+            } else {
+              for (int fitsX = 0; fitsX < w; fitsX++) {
+                const float *p = row + fitsX * binning;
+                double s = acc[fitsX];
+                for (int j = 0; j < binning; j++) s += p[j];
+                acc[fitsX] = s;
+              }
+            }
           }
-        out[fitsX] = static_cast<float>(val / norm);
+        float *out = img2.row(0, static_cast<int>(fitsY));
+        for (int fitsX = 0; fitsX < w; fitsX++) out[fitsX] = static_cast<float>(acc[fitsX] / norm);
       }
-    }
+    });
     (void) log;
   }
 
@@ -164,8 +179,9 @@ namespace astap {
     return std::min(16, result); // 16 max, too much anyhow
   }
 
-  bool Solver::read_stars(double telescope_ra, double telescope_dec, double search_field,
-                          int nrstars_required, RowList &starlist) {
+  bool Solver::read_stars(StarDatabase &database_, double telescope_ra, double telescope_dec,
+                          double search_field, int nrstars_required, RowList &starlist,
+                          double &mag2_) {
     int nrstars = 0;
     double ra2 = 0; // define a value, the first record read could be a header record
     double dec2 = 0, b_v = 0;
@@ -229,6 +245,22 @@ namespace astap {
     // Fix the array length in case fewer stars were found.
     if (nrstars < nrstars_required) starlist.resize(2, static_cast<size_t>(nrstars));
     return true;
+  }
+
+  void Solver::prepare_workers() {
+    const size_t want = std::max<size_t>(1, thread_count());
+    while (workers_.size() < want)
+      workers_.push_back(std::unique_ptr<SearchWorker>(new SearchWorker()));
+    workers_.resize(want);
+
+    for (auto &w: workers_) {
+      // Adopt the selection made for this solve rather than repeating it: the
+      // choice depends on the field of view, which is not known here.
+      w->database.configure(settings_.database_path, database_.name(), database_.database_type());
+      // The image quads are rebuilt for every field of view attempt, so refresh
+      // the read-only copy each time.
+      w->match.quad_star_distances2 = match_.quad_star_distances2;
+    }
   }
 
   bool Solver::add_sip_coefficients(const Header &head, double ra_database, double dec_database) {
@@ -552,9 +584,38 @@ namespace astap {
         int spiral_x = 0, spiral_y = 0;
         int spiral_dx = 0; // first step size x
         int spiral_dy = -1; // first step size y
+        bool spiral_exhausted = false;
 
-        do {
-          // search in a squared spiral
+        // Read nrstars_required stars from the database. When the search field is
+        // oversized the number of required stars increases with the power of the
+        // oversize factor, so that the star density stays the same as in the
+        // image to solve.
+        double oversize2;
+        if (match_nr == 0) {
+          oversize2 = oversize;
+        } else {
+          // Use the full image for the second solve, but limit it to one tile to
+          // prevent tile selection problems.
+          oversize2 = std::min(
+            max_fov / fov2,
+            std::max(oversize, std::sqrt(sqr(width2 / static_cast<double>(height2)) + 1)));
+        }
+        const int nrstars_required2 =
+            static_cast<int>(pround(nrstars_required * oversize2 * oversize2));
+
+        // One position of the squared spiral. Everything needed to evaluate it is
+        // captured here so that a batch of them can be handed to worker threads.
+        struct SpiralPos {
+          int count;
+          int spiral_x, spiral_y;
+          double ra_database, dec_database;
+          bool worth_evaluating; // false when outside the RA range or search circle
+          double seperation;
+        };
+
+        // Advances the spiral by one step and returns the resulting position.
+        // Stays on the calling thread: the walk is a serial recurrence.
+        auto next_position = [&]() {
           if (count != 0) {
             // Start with [0 0], then [1 0], [1 1], [0 1], [-1 1], [-1 0],
             // [-1 -1], [0 -1], [1 -1], [2 -1], [2 0] ...
@@ -569,103 +630,177 @@ namespace astap {
             spiral_y += spiral_dy;
           }
 
+          SpiralPos p;
+          p.count = count;
+          p.spiral_x = spiral_x;
+          p.spiral_y = spiral_y;
+          p.worth_evaluating = false;
+          p.seperation = 0;
+          p.ra_database = 0;
+
           // Adapt the search field to the matrix position.
-          dec_database = step_size * spiral_y + dec_seed;
+          p.dec_database = step_size * spiral_y + dec_seed;
           double flip = 0;
-          if (dec_database > +kPi / 2) {
+          if (p.dec_database > +kPi / 2) {
             // crossed the pole
-            dec_database = kPi - dec_database;
+            p.dec_database = kPi - p.dec_database;
             flip = kPi;
-          } else if (dec_database < -kPi / 2) {
-            dec_database = -kPi - dec_database;
+          } else if (p.dec_database < -kPi / 2) {
+            p.dec_database = -kPi - p.dec_database;
             flip = kPi;
           }
 
           // Use the distance furthest away from the pole.
-          const double extra = dec_database > 0 ? step_size / 2 : -step_size / 2;
+          const double extra = p.dec_database > 0 ? step_size / 2 : -step_size / 2;
 
           // The step is larger near the pole. This is an offset from zero.
-          const double ra_database_offset = (step_size * spiral_x / std::cos(dec_database - extra));
+          const double ra_database_offset = (step_size * spiral_x / std::cos(p.dec_database - extra));
           if (ra_database_offset <= +kPi / 2 + step_size / 2 &&
               ra_database_offset >= -kPi / 2) {
             // step_size for overlap
             // Add the offset to RA after the if statement, otherwise the search
             // would not be symmetrical.
-            ra_database = fnmodulo(flip + ra_seed + ra_database_offset, 2 * kPi);
-
-            double seperation;
-            ang_sep(ra_database, dec_database, ra_seed, dec_seed, seperation);
-
+            p.ra_database = fnmodulo(flip + ra_seed + ra_database_offset, 2 * kPi);
+            ang_sep(p.ra_database, p.dec_database, ra_seed, dec_seed, p.seperation);
             // Use only the circular area within the square area.
-            if (seperation <= radius * kPi / 180 + step_size / 2) {
-              // Report a new distance only once per square spiral, it costs CPU time.
-              if (seperation * 180 / kPi > distance + fov_org) {
-                distance = seperation * 180 / kPi;
-                say("Search distance: " + std::to_string(pround(distance)) + "d");
-              }
-
-              // Read nrstars_required stars from the database. When the search
-              // field is oversized the number of required stars increases with
-              // the power of the oversize factor, so that the star density stays
-              // the same as in the image to solve.
-              double oversize2;
-              if (match_nr == 0) {
-                oversize2 = oversize;
-              } else {
-                // Use the full image for the second solve, but limit it to one
-                // tile to prevent tile selection problems.
-                oversize2 = std::min(max_fov / fov2,
-                                     std::max(oversize, std::sqrt(sqr(width2 / static_cast<double>(
-                                                                        height2)) + 1)));
-              }
-              const int nrstars_required2 =
-                  static_cast<int>(pround(nrstars_required * oversize2 * oversize2));
-
-              if (!read_stars(ra_database, dec_database, search_field * oversize2, nrstars_required2,
-                              starlist1)) {
-                say("Error, no star database found at " + settings_.database_path +
-                    " ! Download and install a star database.");
-                errorlevel_ = kErrStarDatabaseRead;
-                return false;
-              }
-
-              if (match_nr == 1) {
-                // A first solution was found: keep only the stars visible in the
-                // image, so that stars outside the image boundaries are not used
-                // to create database quads.
-                size_t nstars_visible = 0;
-                for (size_t i = 0; i < starlist1.count(); i++) {
-                  double xi, yi;
-                  rotate(crota2_rad, starlist1(0, i) / cdelt1_arcsec,
-                         starlist1(1, i) / cdelt2_arcsec, xi, yi); // rotate to screen orientation
-                  xi = centerX - xi;
-                  yi = centerY - yi;
-                  if (xi > 0 && xi < width2 && yi > 0 && yi < height2) {
-                    starlist1(0, nstars_visible) = starlist1(0, i);
-                    starlist1(1, nstars_visible) = starlist1(1, i);
-                    nstars_visible++;
-                  }
-                }
-                starlist1.resize(2, nstars_visible);
-              }
-
-              find_quads(nrstars_image, starlist1, match_.quad_star_distances1);
-
-              if (settings_.show_log)
-                say("Search " + std::to_string(count) + ", [" + std::to_string(spiral_x) + "," +
-                    std::to_string(spiral_y) + "], position: " + prepare_ra(ra_database, ": ") +
-                    prepare_dec(dec_database, "d ") + "\t down to magn " +
-                    float_to_str(mag2_ / 10, 1) + "\t " + std::to_string(starlist1.count()) +
-                    " database stars\t " + std::to_string(match_.quad_star_distances1.count()) +
-                    " database quads to compare.");
-
-              solution = find_offset_and_rotation(match_, minimum_quads, quad_tolerance,
-                                                  settings_.show_log ? log_ : nullptr);
-            } // within the search circle, otherwise the search is within a kind of square
-          } // RA in range
+            p.worth_evaluating = p.seperation <= radius * kPi / 180 + step_size / 2;
+          }
 
           count++; // step further in the spiral
-        } while (!(solution || spiral_x > max_distance));
+          // The original checks the termination after processing the position, so
+          // the first position beyond max_distance is still evaluated.
+          if (spiral_x > max_distance) spiral_exhausted = true;
+          return p;
+        };
+
+        // The positions of a batch are independent, so they are evaluated in
+        // parallel. Taking the lowest index that solves gives exactly the result
+        // of the sequential search: it stops at the first solving position, and
+        // batches are generated in spiral order.
+        prepare_workers();
+        const size_t max_batch = std::max<size_t>(1, workers_.size() * 4);
+        // Start with a single position and grow. Most solves with a hint succeed
+        // on the very first position, and there is no reason to pay for a
+        // parallel batch and its synchronisation to find that out.
+        size_t batch_size = 1;
+        std::vector<SpiralPos> batch;
+        batch.reserve(max_batch);
+
+        int winner = -1;
+        while (winner < 0) {
+          batch.clear();
+          while (batch.size() < batch_size && !spiral_exhausted) batch.push_back(next_position());
+          batch_size = std::min(max_batch, batch_size * 4);
+          if (batch.empty()) break;
+
+          // Report a new distance only once per batch, it costs CPU time.
+          for (const SpiralPos &p: batch) {
+            if (p.worth_evaluating && p.seperation * 180 / kPi > distance + fov_org) {
+              distance = p.seperation * 180 / kPi;
+              say("Search distance: " + std::to_string(pround(distance)) + "d");
+            }
+          }
+
+          std::vector<char> solved(batch.size(), 0);
+          std::vector<char> db_failed(batch.size(), 0);
+
+          parallel_for(0, batch.size(), [&](size_t k, unsigned t) {
+            const SpiralPos &p = batch[k];
+            if (!p.worth_evaluating) return;
+            SearchWorker &w = *workers_[t];
+
+            if (!read_stars(w.database, p.ra_database, p.dec_database, search_field * oversize2,
+                            nrstars_required2, w.starlist, w.mag2)) {
+              db_failed[k] = 1;
+              return;
+            }
+
+            if (match_nr == 1) {
+              // A first solution was found: keep only the stars visible in the
+              // image, so that stars outside the image boundaries are not used to
+              // create database quads.
+              size_t nstars_visible = 0;
+              for (size_t i = 0; i < w.starlist.count(); i++) {
+                double xi, yi;
+                rotate(crota2_rad, w.starlist(0, i) / cdelt1_arcsec,
+                       w.starlist(1, i) / cdelt2_arcsec, xi, yi); // rotate to screen orientation
+                xi = centerX - xi;
+                yi = centerY - yi;
+                if (xi > 0 && xi < width2 && yi > 0 && yi < height2) {
+                  w.starlist(0, nstars_visible) = w.starlist(0, i);
+                  w.starlist(1, nstars_visible) = w.starlist(1, i);
+                  nstars_visible++;
+                }
+              }
+              w.starlist.resize(2, nstars_visible);
+            }
+
+            find_quads(nrstars_image, w.starlist, w.match.quad_star_distances1);
+
+            solved[k] = find_offset_and_rotation(w.match, minimum_quads, quad_tolerance, nullptr)
+                          ? 1
+                          : 0;
+          });
+
+          for (size_t k = 0; k < batch.size(); k++) {
+            if (db_failed[k]) {
+              say("Error, no star database found at " + settings_.database_path +
+                  " ! Download and install a star database.");
+              errorlevel_ = kErrStarDatabaseRead;
+              return false;
+            }
+          }
+
+          // Lowest index wins, which is the position the sequential search would
+          // have stopped at.
+          for (size_t k = 0; k < batch.size(); k++)
+            if (solved[k]) {
+              winner = static_cast<int>(k);
+              break;
+            }
+
+          if (winner >= 0) {
+            // Re-evaluate the winning position on this thread so that the solver
+            // state (matched quads, star list, magnitude limit) is exactly the
+            // state the sequential search would have ended with, independent of
+            // which worker happened to pick it up.
+            const SpiralPos &p = batch[static_cast<size_t>(winner)];
+            ra_database = p.ra_database;
+            dec_database = p.dec_database;
+            SearchWorker &w = *workers_[0];
+            read_stars(w.database, p.ra_database, p.dec_database, search_field * oversize2,
+                       nrstars_required2, starlist1, mag2_);
+            if (match_nr == 1) {
+              size_t nstars_visible = 0;
+              for (size_t i = 0; i < starlist1.count(); i++) {
+                double xi, yi;
+                rotate(crota2_rad, starlist1(0, i) / cdelt1_arcsec, starlist1(1, i) / cdelt2_arcsec,
+                       xi, yi);
+                xi = centerX - xi;
+                yi = centerY - yi;
+                if (xi > 0 && xi < width2 && yi > 0 && yi < height2) {
+                  starlist1(0, nstars_visible) = starlist1(0, i);
+                  starlist1(1, nstars_visible) = starlist1(1, i);
+                  nstars_visible++;
+                }
+              }
+              starlist1.resize(2, nstars_visible);
+            }
+            find_quads(nrstars_image, starlist1, match_.quad_star_distances1);
+            solution = find_offset_and_rotation(match_, minimum_quads, quad_tolerance,
+                                                settings_.show_log ? log_ : nullptr);
+
+            if (settings_.show_log)
+              say("Search " + std::to_string(p.count) + ", [" + std::to_string(p.spiral_x) + "," +
+                  std::to_string(p.spiral_y) + "], position: " + prepare_ra(ra_database, ": ") +
+                  prepare_dec(dec_database, "d ") + "\t down to magn " +
+                  float_to_str(mag2_ / 10, 1) + "\t " + std::to_string(starlist1.count()) +
+                  " database stars\t " + std::to_string(match_.quad_star_distances1.count()) +
+                  " database quads to compare.");
+          }
+
+          if (spiral_exhausted && winner < 0) break;
+        }
 
         if (solution) {
           centerX = (width2 - 1) / 2.0; // centre of the image in the 0..width-1 range

@@ -10,6 +10,7 @@
 
 #include "astap/astro_math.h"
 #include "astap/fits.h"
+#include "astap/parallel.h"
 #include "astap/solver.h"
 
 namespace {
@@ -48,6 +49,7 @@ namespace {
         "-wcs {write a .wcs file in the FITS header format}\n"
         "-log {write the solver log to a .log text file}\n"
         "-progress {log all progress steps and messages}\n"
+        "-threads N {worker threads, 0 or omitted = one per available hardware thread}\n"
         "\n"
         "Preference is given to the command line values. The solver result is written to\n"
         "filename.ini and, with -wcs, to filename.wcs.\n"
@@ -133,6 +135,7 @@ int main(int argc, char **argv) {
   if (has("check")) settings.check_pattern_filter = val("check") != "n";
   if (has("D")) settings.star_database = val("D");
   settings.show_log = progress;
+  if (has("threads")) astap::set_thread_count((unsigned) std::atoi(val("threads").c_str()));
 
   const std::string filename_output = has("o") ? val("o") : filename;
 

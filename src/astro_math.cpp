@@ -13,11 +13,11 @@ namespace astap {
     return result;
   }
 
-  double smedian(std::vector<double> &list, size_t leng) {
+  double smedian(double *list, size_t leng) {
     if (leng == 0) return std::nan("");
     if (leng == 1) return list[0];
 
-    std::sort(list.begin(), list.begin() + static_cast<long>(leng));
+    std::sort(list, list + leng);
     size_t mid = (leng - 1) / 2;
     if (leng % 2 == 1) {
       if (leng <= 3) return list[mid];

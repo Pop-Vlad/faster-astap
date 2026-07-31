@@ -25,7 +25,9 @@
 #pragma once
 
 #include <functional>
+#include <memory>
 #include <string>
+#include <vector>
 
 #include "astap/matching.h"
 #include "astap/star_database.h"
@@ -99,10 +101,26 @@ namespace astap {
 
     // Read the stars of the area of interest from the database and convert them
     // to standard coordinates relative to telescope_ra, telescope_dec.
-    bool read_stars(double telescope_ra, double telescope_dec, double search_field,
-                    int nrstars_required, RowList &starlist);
+    // `db` and `mag_out` are passed explicitly so that several search threads can
+    // each read from their own file handle and tile cache.
+    bool read_stars(StarDatabase &db, double telescope_ra, double telescope_dec, double search_field,
+                    int nrstars_required, RowList &starlist, double &mag_out);
 
     bool add_sip_coefficients(const Header &head, double ra_database, double dec_database);
+
+    // Per-thread state for the parallel spiral search. Each worker needs its own
+    // database file handle and tile cache, its own star list and its own match
+    // state, so that the positions of a batch do not interfere.
+    struct SearchWorker {
+      StarDatabase database;
+      MatchState match;
+      RowList starlist;
+      double mag2 = 0;
+    };
+
+    // Creates (or reuses) one worker per thread and points each at the database
+    // selected for this solve.
+    void prepare_workers();
 
     void say(const std::string &s) const {
       if (log_) log_(s);
@@ -111,6 +129,9 @@ namespace astap {
     SolverSettings settings_;
     LogFn log_;
     StarDatabase database_;
+    // unique_ptr because a worker holds an ifstream, which is not movable in a
+    // way that survives vector growth on every standard library.
+    std::vector<std::unique_ptr<SearchWorker> > workers_;
     MatchState match_;
     Histogram histogram_;
     SipCoefficients sip_;
