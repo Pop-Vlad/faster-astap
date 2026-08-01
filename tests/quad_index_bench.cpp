@@ -12,7 +12,7 @@
 #include <vector>
 
 #include "astap/astro_math.h"
-#include "astap/fits.h"
+#include "astap/image/fits.h"
 #include "astap/index_solver.h"
 #include "astap/quad_index.h"
 #include "astap/quads.h"

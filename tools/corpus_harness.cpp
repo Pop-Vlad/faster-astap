@@ -29,7 +29,7 @@
 #include <vector>
 
 #include "astap/astro_math.h"
-#include "astap/fits.h"
+#include "astap/image/fits.h"
 #include "astap/index_solver.h"
 #include "astap/quad_index.h"
 #include "astap/quads.h"
@@ -177,7 +177,7 @@ int main(int argc, char **argv) {
 
     Header head;
     ImageArray img;
-    FitsLoadResult r = load_fits(f, head, img);
+    ImageLoadResult r = load_fits(f, head, img);
     if (!r.ok) {
       std::printf("  %-42s cannot read: %s\n", basename_of(f).c_str(), r.error.c_str());
       continue;

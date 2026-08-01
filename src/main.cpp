@@ -9,7 +9,8 @@
 #include <vector>
 
 #include "astap/astro_math.h"
-#include "astap/fits.h"
+#include "astap/image/fits.h"
+#include "astap/image/image_io.h"
 #include "astap/parallel.h"
 #include "astap/solver.h"
 
@@ -31,7 +32,7 @@ namespace {
         << "ASTAP astrometric solver, C++ port\n"
         "Original algorithm (C) 2018-2026 by Han Kleijn. License MPL 2.0, www.hnsky.org\n"
         "Usage:\n"
-        "-f   filename {FITS file}\n"
+        "-f   filename {image file, see the list of extensions below}\n"
         "-r   radius_area_to_search[degrees]\n"
         "-fov diameter_field[degrees] {enter zero for auto}\n"
         "-ra  right_ascension[hours]\n"
@@ -54,6 +55,8 @@ namespace {
         "Preference is given to the command line values. The solver result is written to\n"
         "filename.ini and, with -wcs, to filename.wcs.\n"
         "\n"
+     << "Image files read by this build: " << astap::supported_image_extensions() << "\n"
+     << "\n"
         "Exit status: 0 no errors, 1 no solution, 2 not enough stars detected,\n"
         "16 error reading the image file, 32 no star database found,\n"
         "33 error reading the star database.\n";
@@ -99,7 +102,7 @@ int main(int argc, char **argv) {
 
   astap::Header head;
   astap::ImageArray img;
-  astap::FitsLoadResult loaded = astap::load_fits(filename, head, img);
+  astap::ImageLoadResult loaded = astap::load_image(filename, head, img);
 
   std::vector<std::string> log_lines;
   const bool want_log = has("log");
@@ -116,6 +119,7 @@ int main(int argc, char **argv) {
     astap::write_ini(change_file_ext(out, ".ini"), false, head, cmdline, astap::kErrImageRead, "");
     return astap::kErrImageRead;
   }
+  if (!loaded.warning.empty()) log(loaded.warning);
 
   // Command line values override the header.
   if (has("fov")) {

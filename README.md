@@ -49,8 +49,27 @@ add `-wcs` for a FITS-header `.wcs` file. Exit status is 0 solved, 1 no
 solution, 2 not enough stars, 16 image read error, 32 no star database, 33 star
 database read error.
 
-Images must be uncompressed FITS. For PNG/TIFF/JPEG use
-`tools/png_to_fits.py`, and for Rice-compressed `.fz` use `funpack` first.
+### Image formats
+
+The same extensions `astap_cli` accepts, read in process — no conversion step,
+no temporary files:
+
+| | |
+| --- | --- |
+| `.fit` `.fits` `.fts` `.new` | uncompressed FITS, BITPIX 8/16/32/-32/-64 |
+| `.fz` | compressed FITS: Rice (`RICE_1`) and, unlike `astap_cli`, GZIP |
+| `.ppm` `.pgm` `.pfm` | binary Netpbm (`P5`/`P6`) and Portable Float Map |
+| `.bmp` | 1/4/8/16/24/32 bit, uncompressed |
+| `.png` `.jpg` `.jpeg` `.tif` `.tiff` | through libpng, libjpeg and libtiff |
+| `.cr2` `.cr3` `.nef` `.arw` `.dng` … | raw camera files through LibRaw |
+
+The four libraries are optional: CMake links whichever it finds and the binary
+reports the rest as unsupported (`astap_solve -h` lists what your build reads).
+FITS, Netpbm and BMP never need anything beyond the compiler.
+
+Raw files are handed to the solver as the undemosaiced sensor frame, margins
+included, which is what the ASTAP GUI gets from `dcraw`/`unprocessed_raw` —
+byte for byte the same pixels, without the detour through a PGM.
 
 ## Performance
 
@@ -266,11 +285,27 @@ original uses, downloadable from www.hnsky.org.
 The plain build is in [Quick start](#quick-start) and needs nothing beyond a C++17 compiler.
 
 CMake targets: `astap_solve`, `astap_index_solve`, `corpus_harness`,
-`solver_tests`, `quad_batch_tests`, `quad_index_bench`.
+`solver_tests`, `image_io_tests`, `quad_batch_tests`, `quad_index_bench`.
+
+Two libraries are built: `astap_solver` is the solving core, `astap_image`
+everything that turns a file into pixels. Only the image module looks for
+optional dependencies, and it reports what it found:
+
+```
+-- Image formats: FITS, FITS.fz (Rice), Netpbm, BMP, FITS.fz (GZIP), PNG, JPEG, TIFF, raw camera files
+```
+
+zlib, libpng, libjpeg, libtiff and LibRaw are each picked up when present and
+skipped when not; `-DASTAP_PNG=OFF` and friends leave one out on purpose. A
+build without any of them still reads FITS, `.fz` Rice, Netpbm and BMP.
 
 `quad_batch_tests` compares the batched quad construction against
 `find_quads()` value by value with `memcmp`, across every group size the solver
 uses, so the batching cannot change a solution.
+
+`image_io_tests` checks every loader against reference files decoded by other
+implementations (astropy, i.e. CFITSIO, for the compressed FITS variants, and
+Pillow for PNG/TIFF/JPEG), pixel by pixel and including the row order.
 
 ## The method
 
@@ -323,7 +358,12 @@ a margin of more than 20 000x — and the final fit is fp64 throughout.
 |----------------------------|------------------------------------------------------------------------------------------------|
 | `include/astap/types.h`    | `ImageArray`, `RowList` (the Pascal `Timage_array` / `Tstar_list`), `Header`                   |
 | `astro_math.{h,cpp}`       | median, angular separation, gnomonic projection both ways, position angle, sexagesimal parsing |
-| `fits.{h,cpp}`             | uncompressed FITS reader, FITS header writer                                                   |
+| `image/image_io.{h,cpp}`   | `load_image`, the dispatch on the extension and the synthetic FITS header                      |
+| `image/fits.{h,cpp}`       | FITS reader, plain and tile compressed, and the FITS header writer                             |
+| `image/rice.{h,cpp}`       | Rice and GZIP tile decoding, from CFITSIO's `ricecomp.c` by way of the Pascal                  |
+| `image/image_pnm.cpp`      | Netpbm and Portable Float Map, no dependencies                                                 |
+| `image/image_bmp.cpp`      | Windows bitmap, no dependencies                                                                |
+| `image/image_{png,jpeg,tiff,raw}.cpp` | the optional decoders, one system library each                                      |
 | `star_detection.{h,cpp}`   | steps 1–2: `get_hist`, `get_background`, `hfd`, `find_stars`                                   |
 | `quads.{h,cpp}`            | steps 3–5: `find_quads`, `find_many_quads`                                                     |
 | `matching.{h,cpp}`         | steps 6–8: `find_fit`, `find_fit_using_hash`, `lsq_fit`, `find_offset_and_rotation`            |
@@ -338,7 +378,7 @@ a margin of more than 20 000x — and the final fit is fp64 throughout.
 | `quad_batch.{h,cpp}`       | quad construction for a whole batch of search positions, over the thread pool                  |
 | `tools/corpus_harness.cpp` | runs both solvers over a corpus and reports the capability gate                                |
 | `tools/fetch_skyview_corpus.py` | downloads the test corpus from NASA SkyView, with ground truth                            |
-| `tools/png_to_fits.py`     | PNG/TIFF/JPEG to 16 bit FITS                                                                   |
+| `tools/png_to_fits.py`     | PNG/TIFF/JPEG to 16 bit FITS, for a build without the image libraries                          |
 
 ## Verification
 

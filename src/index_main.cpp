@@ -21,7 +21,8 @@
 #include <vector>
 
 #include "astap/astro_math.h"
-#include "astap/fits.h"
+#include "astap/image/fits.h"
+#include "astap/image/image_io.h"
 #include "astap/index_solver.h"
 #include "astap/parallel.h"
 #include "astap/quad_index.h"
@@ -83,7 +84,7 @@ namespace {
         "The index is cached under ~/.cache/faster-astap and built on first use.\n"
         "\n"
         "Usage:\n"
-        "-f   filename {FITS file. May be repeated, or list files after the options}\n"
+        "-f   filename {image file. May be repeated, or list files after the options}\n"
         "-d   path {path to the star database, needed to build an index}\n"
         "-D   abbreviation[d80,d50,...] {select a star database}\n"
         "-fov diameter_field[degrees] {orders the depth sweep, does not restrict it}\n"
@@ -108,6 +109,8 @@ namespace {
         "\n"
         "The solver result is written to filename.ini and, with -wcs, to filename.wcs.\n"
         "\n"
+     << "Image files read by this build: " << astap::supported_image_extensions() << "\n"
+     << "\n"
         "Exit status: 0 no errors, 1 no solution, 2 not enough stars detected,\n"
         "16 error reading the image file, 32 no star database found,\n"
         "33 error reading the star database.\n";
@@ -313,7 +316,7 @@ int main(int argc, char **argv) {
   for (const std::string &filename : images) {
     astap::Header head;
     astap::ImageArray img;
-    const astap::FitsLoadResult r = astap::load_fits(filename, head, img);
+    const astap::ImageLoadResult r = astap::load_image(filename, head, img);
     const std::string out_base = has("o") ? val("o") : filename;
     if (!r.ok) {
       log(r.error);
@@ -322,6 +325,7 @@ int main(int argc, char **argv) {
       worst = std::max(worst, static_cast<int>(astap::kErrImageRead));
       continue;
     }
+    if (!r.warning.empty()) log(r.warning);
 
     astap::ImageArray small;
     const int bin = bin_mono(img, head.width, head.height, forced_bin, small);
