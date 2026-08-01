@@ -7,7 +7,7 @@
 #include <unordered_map>
 #include <cmath>
 #include <cstdio>
-#include <sys/stat.h>
+#include <filesystem>
 
 #include "astap/astro_math.h"
 
@@ -18,8 +18,8 @@ namespace astap {
 
   namespace {
     bool file_exists(const std::string &name) {
-      struct stat st;
-      return ::stat(name.c_str(), &st) == 0;
+      std::error_code ec;
+      return std::filesystem::exists(name, ec);
     }
 
     std::string to_lower(std::string s) {

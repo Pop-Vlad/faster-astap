@@ -49,6 +49,14 @@ namespace {
     return slash == std::string::npos ? std::string("./") : path.substr(0, slash + 1);
   }
 
+  // The database path is concatenated with a bare file name, so it has to end in
+  // a separator. Windows takes '/' too, and a path the user already ended with
+  // '\' is left as it is.
+  std::string with_separator(std::string dir) {
+    if (!dir.empty() && dir.back() != '/' && dir.back() != '\\') dir += '/';
+    return dir;
+  }
+
   // The default depth ladder. One tier reaches about a factor of two in image
   // star density either side of itself, so a ratio of 2.5 between rungs covers
   // 0.2 to 2000 stars/deg^2 continuously. Measured over the corpus, an image
@@ -226,7 +234,7 @@ int main(int argc, char **argv) {
       has("tiers") ? parse_densities(val("tiers")) : kDefaultLadder;
 
   // --- locate the star database ---------------------------------------------
-  const std::string dbpath = has("d") ? val("d") + "/" : dir_of(argv[0]);
+  const std::string dbpath = has("d") ? with_separator(val("d")) : dir_of(argv[0]);
   astap::StarDatabase db;
   const bool have_db = db.select(dbpath, has("D") ? val("D") : "auto", 1.0);
 

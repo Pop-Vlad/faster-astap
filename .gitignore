@@ -1,4 +1,8 @@
 build/
+build-*/
+cmake-build-*/
+# `cmake --install build --prefix dist`, the Windows bundle
+dist/
 *.o
 *.a
 *.ini

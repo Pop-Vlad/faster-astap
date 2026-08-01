@@ -23,7 +23,7 @@
 #include <cmath>
 #include <cstdio>
 #include <cstring>
-#include <dirent.h>
+#include <filesystem>
 #include <fstream>
 #include <string>
 #include <vector>
@@ -98,21 +98,22 @@ namespace {
 
   std::vector<std::string> list_fits(const std::string &dir, const std::string &filter) {
     std::vector<std::string> out;
-    DIR *d = opendir(dir.c_str());
-    if (!d) return out;
-    while (dirent *e = readdir(d)) {
-      const std::string n = e->d_name;
+    std::error_code ec;
+    for (const auto &e: std::filesystem::directory_iterator(dir, ec)) {
+      if (!e.is_regular_file(ec)) continue;
+      const std::string n = e.path().filename().string();
       if (n.size() < 6 || n.compare(n.size() - 5, 5, ".fits") != 0) continue;
       if (!filter.empty() && n.find(filter) == std::string::npos) continue;
-      out.push_back(dir + "/" + n);
+      out.push_back(e.path().string());
     }
-    closedir(d);
     std::sort(out.begin(), out.end());
     return out;
   }
 
+  // Splits on both separators: on Windows the paths above come back with
+  // backslashes.
   std::string basename_of(const std::string &p) {
-    const size_t s = p.find_last_of('/');
+    const size_t s = p.find_last_of("/\\");
     return s == std::string::npos ? p : p.substr(s + 1);
   }
 } // namespace
@@ -126,7 +127,10 @@ int main(int argc, char **argv) {
   }
   const std::string corpus = argv[1];
   std::string dbpath = argv[2];
-  if (dbpath.back() != '/') dbpath += '/';
+  // StarDatabase concatenates this with a bare file name, so it has to end in a
+  // separator. Windows accepts '/' as well, and a path the user already ended
+  // with '\' is left alone.
+  if (!dbpath.empty() && dbpath.back() != '/' && dbpath.back() != '\\') dbpath += '/';
 
   std::vector<double> densities;
   bool hint = false;

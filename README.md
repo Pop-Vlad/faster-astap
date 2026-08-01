@@ -26,6 +26,10 @@ cmake -S . -B build -DCMAKE_BUILD_TYPE=Release && cmake --build build -j
 ctest --test-dir build
 ```
 
+On Windows, see [Building on Windows](#building-on-windows): the same CMake, in
+an MSYS2 UCRT64 shell, plus one `cmake --install` that produces binaries which
+run on any Windows 10 machine with nothing installed.
+
 No dependencies beyond the standard library. You also need a star database —
 the same `.1476`, `.290` or `.001` files the original uses, from
 [www.hnsky.org](https://www.hnsky.org/astap.htm). D80 (1.33 GB) is recommended and suits most
@@ -43,8 +47,9 @@ images; D50 or W08 are smaller and shallower.
 ```
 
 The first `astap_index_solve` run builds the index (about 5 s) and caches it
-under `~/.cache/faster-astap/`, one file per star database. Later runs read it
-back. The solution lands in `image.ini`, in the same format `astap_cli` writes;
+under `~/.cache/faster-astap/` (`%LOCALAPPDATA%\faster-astap\cache\` on
+Windows), one file per star database. Later runs read it back. The solution lands
+in `image.ini`, in the same format `astap_cli` writes;
 add `-wcs` for a FITS-header `.wcs` file. Exit status is 0 solved, 1 no
 solution, 2 not enough stars, 16 image read error, 32 no star database, 33 star
 database read error.
@@ -299,9 +304,88 @@ zlib, libpng, libjpeg, libtiff and LibRaw are each picked up when present and
 skipped when not; `-DASTAP_PNG=OFF` and friends leave one out on purpose. A
 build without any of them still reads FITS, `.fz` Rice, Netpbm and BMP.
 
+### Building on Windows
+
+The toolchain is [MSYS2](https://www.msys2.org/)'s **UCRT64** environment: the
+same GCC as the Linux build, and the environment where `pkg-config` finds all
+five optional libraries, LibRaw included. Install MSYS2, then from the
+**MSYS2 UCRT64** shell:
+
+```sh
+pacman -S --needed \
+  mingw-w64-ucrt-x86_64-gcc mingw-w64-ucrt-x86_64-cmake \
+  mingw-w64-ucrt-x86_64-ninja mingw-w64-ucrt-x86_64-pkgconf \
+  mingw-w64-ucrt-x86_64-zlib mingw-w64-ucrt-x86_64-libpng \
+  mingw-w64-ucrt-x86_64-libjpeg-turbo mingw-w64-ucrt-x86_64-libtiff \
+  mingw-w64-ucrt-x86_64-libraw
+```
+
+Then build, and install the result into `dist`:
+
+```sh
+cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
+cmake --build build
+cmake --install build --prefix dist
+```
+
+Copy `dist` anywhere, zip it, hand it to N.I.N.A.: it needs Windows 10 or newer, where the Universal CRT is part of
+the OS, and nothing else. In particular there is no Visual C++ redistributable
+to ship.
+
+Install into a directory that does not already exist, or at least an empty one.
+CMake skips files it considers up to date, so installing over a `dist` you have
+been editing by hand can leave you with a bundle that is missing a piece.
+
+#### One file, if you can give up the extra formats
+
+The bundle is a folder because the image libraries are separate DLLs. Turning
+them off leaves a single executable that depends on nothing outside Windows:
+
+```sh
+cmake -S . -B build-core -G Ninja -DCMAKE_BUILD_TYPE=Release \
+      -DASTAP_ZLIB=OFF -DASTAP_PNG=OFF -DASTAP_JPEG=OFF \
+      -DASTAP_TIFF=OFF -DASTAP_LIBRAW=OFF
+cmake --build build-core
+```
+
+Both forms link libstdc++, libgcc and libwinpthread into the executable, which
+is what `ASTAP_STATIC_RUNTIME` does and is the default on Windows. There is no
+reason to turn it off unless you are deliberately packaging against shared
+MSYS2 runtime DLLs.
+
+#### Running the tests
+
+The test binaries are built in `build` and are not part of the bundle, so this
+is the one job that uses the build tree directly:
+
+```sh
+ctest --test-dir build
+```
+
+`image_io_tests` needs the reference files in `tests/data`, which are not in the
+repository, and reports `Error, accessing the file!` for each one that is
+missing. Write them once and the suite is green:
+
+```sh
+python tools/make_test_images.py tests/data
+```
+
+That needs astropy and Pillow, which MSYS2 does not package for UCRT64. The
+simplest source is a normal Windows Python, from outside the MSYS2 shell:
+
+```pwsh
+py -m venv .venv
+.venv\Scripts\python.exe -m pip install astropy pillow
+.venv\Scripts\python.exe tools\make_test_images.py tests\data
+```
+
 `quad_batch_tests` compares the batched quad construction against
 `find_quads()` value by value with `memcmp`, across every group size the solver
 uses, so the batching cannot change a solution.
+
+Its reference files are written by `tools/make_test_images.py`; see
+[Building on Windows](#building-on-windows) for the one time setup, which is
+the same on any platform.
 
 `image_io_tests` checks every loader against reference files decoded by other
 implementations (astropy, i.e. CFITSIO, for the compressed FITS variants, and
@@ -379,6 +463,7 @@ a margin of more than 20 000x — and the final fit is fp64 throughout.
 | `tools/corpus_harness.cpp` | runs both solvers over a corpus and reports the capability gate                                |
 | `tools/fetch_skyview_corpus.py` | downloads the test corpus from NASA SkyView, with ground truth                            |
 | `tools/png_to_fits.py`     | PNG/TIFF/JPEG to 16 bit FITS, for a build without the image libraries                          |
+| `tools/make_test_images.py` | writes the PNG/TIFF/JPEG reference files `image_io_tests` reads from `tests/data`             |
 
 ## Verification
 

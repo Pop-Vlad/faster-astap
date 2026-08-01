@@ -7,6 +7,20 @@
 #include <sched.h>
 #endif
 
+#ifdef _WIN32
+// GetActiveProcessorCount needs Windows 7 or later.
+#ifndef _WIN32_WINNT
+#define _WIN32_WINNT 0x0601
+#endif
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <windows.h>
+#endif
+
 namespace astap {
   namespace {
     unsigned g_threads = 0;
@@ -29,6 +43,24 @@ namespace astap {
         const int n = CPU_COUNT(&mask);
         if (n > 0) return static_cast<unsigned>(n);
       }
+#endif
+#ifdef _WIN32
+      // The Windows counterpart of the affinity mask above. It is only consulted
+      // when the machine has a single processor group, because on a larger one
+      // the mask describes just the group this process started in and would
+      // undercount; there the active processor count is the honest number.
+      // hardware_concurrency() has that same one-group blind spot, which is why
+      // it is not enough on its own.
+      if (GetActiveProcessorGroupCount() <= 1) {
+        DWORD_PTR process_mask = 0, system_mask = 0;
+        if (GetProcessAffinityMask(GetCurrentProcess(), &process_mask, &system_mask)) {
+          unsigned n = 0;
+          for (DWORD_PTR m = process_mask; m != 0; m &= m - 1) n++;
+          if (n > 0) return n;
+        }
+      }
+      const unsigned active = GetActiveProcessorCount(ALL_PROCESSOR_GROUPS);
+      if (active > 0) return active;
 #endif
       const unsigned hw = std::thread::hardware_concurrency();
       return hw == 0 ? 1 : hw;

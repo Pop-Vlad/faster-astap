@@ -438,10 +438,21 @@ namespace astap {
   std::string default_index_cache_path(const std::string &db_name, int database_type,
                                        double quad_tolerance) {
     const char *xdg = std::getenv("XDG_CACHE_HOME");
+#ifdef _WIN32
+    // The index is a large file that is expensive to rebuild, so it belongs in
+    // LocalAppData rather than in TEMP, which Windows is free to clear. This is
+    // checked before HOME because a Git Bash or MSYS shell sets HOME as well,
+    // and the cache should not move depending on which shell started the solve.
+    const char *local = std::getenv("LOCALAPPDATA");
+#else
+    const char *local = nullptr;
+#endif
     const char *home = std::getenv("HOME");
     std::filesystem::path dir;
     if (xdg && *xdg) {
       dir = std::filesystem::path(xdg) / "faster-astap";
+    } else if (local && *local) {
+      dir = std::filesystem::path(local) / "faster-astap" / "cache";
     } else if (home && *home) {
       dir = std::filesystem::path(home) / ".cache" / "faster-astap";
     } else {

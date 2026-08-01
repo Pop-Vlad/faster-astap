@@ -27,6 +27,14 @@ namespace {
     return slash == std::string::npos ? std::string("./") : path.substr(0, slash + 1);
   }
 
+  // The database path is concatenated with a bare file name, so it has to end in
+  // a separator. Windows takes '/' too, and a path the user already ended with
+  // '\' is left as it is.
+  std::string with_separator(std::string dir) {
+    if (!dir.empty() && dir.back() != '/' && dir.back() != '\\') dir += '/';
+    return dir;
+  }
+
   void print_usage() {
     std::cout
         << "ASTAP astrometric solver, C++ port\n"
@@ -96,7 +104,7 @@ int main(int argc, char **argv) {
   }
 
   astap::SolverSettings settings;
-  settings.database_path = has("d") ? val("d") + "/" : dir_of(argv[0]);
+  settings.database_path = has("d") ? with_separator(val("d")) : dir_of(argv[0]);
 
   const std::string filename = val("f");
 

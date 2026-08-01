@@ -33,7 +33,7 @@ int main(int argc, char** argv) {
   }
   const std::string image = argv[1];
   std::string dbpath = argv[2];
-  if (dbpath.back() != '/') dbpath += '/';
+  if (!dbpath.empty() && dbpath.back() != '/' && dbpath.back() != '\\') dbpath += '/';
   const double density = argc > 3 ? std::atof(argv[3]) : 300.0;
   const bool have_truth = argc > 5;
   const double true_ra = have_truth ? std::atof(argv[4]) * kPi / 180 : 0;
