@@ -159,6 +159,21 @@ namespace astap {
         }
   }
 
+  // Finds a star database: the one directory named, or the first of the default
+  // places that holds one.
+  bool SolveService::select_database(const LogFn &log) {
+    if (!settings_.database_path.empty())
+      return db_.select(with_separator(settings_.database_path), settings_.database, 1.0);
+
+    for (const std::string &dir : default_database_directories()) {
+      if (!db_.select(with_separator(dir), settings_.database, 1.0)) continue;
+      if (log) log("Star database: " + db_.name() + " in " + db_.path());
+      settings_.database_path = dir;
+      return true;
+    }
+    return false;
+  }
+
   bool SolveService::load(const SolveServiceSettings &s, const LogFn &log) {
     settings_ = s;
     if (settings_.ladder.empty()) settings_.ladder = default_tier_ladder();
@@ -169,7 +184,7 @@ namespace astap {
       if (log) log(m);
     };
 
-    have_db_ = db_.select(with_separator(settings_.database_path), settings_.database, 1.0);
+    have_db_ = select_database(log);
     const std::string db_name = have_db_ ? db_.name() : "unknown";
     const int db_type = have_db_ ? db_.database_type() : 0;
 
@@ -214,7 +229,16 @@ namespace astap {
       // than at the top: a machine that has the cache but has since moved its
       // database directory can still solve, it just cannot rebuild.
       if (!have_db_) {
-        say("No star database found in " + with_separator(settings_.database_path));
+        // Nothing was named and nothing was found, so say where it looked
+        // rather than making the user guess which directory was meant.
+        if (s.database_path.empty()) {
+          std::string where;
+          for (const std::string &dir : default_database_directories())
+            where += (where.empty() ? "" : ", ") + dir;
+          say("No star database found. Looked in: " + where);
+        } else {
+          say("No star database found in " + with_separator(settings_.database_path));
+        }
         tiers_.clear();
         return false;
       }

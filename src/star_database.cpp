@@ -11,10 +11,61 @@
 
 #include "astap/astro_math.h"
 
+#ifdef _WIN32
+#include <windows.h>
+#elif defined(__APPLE__)
+#include <mach-o/dyld.h>
+#else
+#include <unistd.h>
+#endif
+
 namespace astap {
   // Exactly the scale factors the record decoder applied.
   static constexpr double kRaScale = kPi * 2 / ((256.0 * 256 * 256) - 1);
   static constexpr double kDecScale = kPi * 0.5 / ((128.0 * 256 * 256) - 1);
+
+  std::string executable_directory() {
+    std::string path;
+#ifdef _WIN32
+    char buf[4096];
+    const DWORD n = GetModuleFileNameA(nullptr, buf, sizeof(buf));
+    if (n) path.assign(buf, n);
+#elif defined(__APPLE__)
+    char buf[4096];
+    uint32_t size = sizeof(buf);
+    if (_NSGetExecutablePath(buf, &size) == 0) path = buf;
+#else
+    char buf[4096];
+    const ssize_t n = readlink("/proc/self/exe", buf, sizeof(buf) - 1);
+    if (n > 0) path.assign(buf, static_cast<size_t>(n));
+#endif
+    if (path.empty()) return path;
+    const size_t slash = path.find_last_of("/\\");
+    return slash == std::string::npos ? std::string() : path.substr(0, slash + 1);
+  }
+
+  std::vector<std::string> default_database_directories() {
+    std::vector<std::string> dirs;
+    const std::string here = executable_directory();
+    if (!here.empty()) dirs.push_back(here);
+
+#ifdef _WIN32
+    // The installer's default, and the same path for the 32 bit build that some
+    // machines still have.
+    dirs.push_back("C:/Program Files/astap/");
+    dirs.push_back("C:/Program Files (x86)/astap/");
+#elif defined(__APPLE__)
+    dirs.push_back("/Applications/ASTAP.app/Contents/MacOS/");
+#else
+    // Where the .deb and the star database packages put them, and where the
+    // distribution-packaged builds expect them instead.
+    dirs.push_back("/opt/astap/");
+    dirs.push_back("/usr/share/astap/data/");
+    dirs.push_back("/usr/share/astap/");
+    dirs.push_back("/usr/local/share/astap/");
+#endif
+    return dirs;
+  }
 
   namespace {
     bool file_exists(const std::string &name) {

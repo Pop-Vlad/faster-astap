@@ -104,7 +104,22 @@ int main(int argc, char **argv) {
   }
 
   astap::SolverSettings settings;
-  settings.database_path = has("d") ? with_separator(val("d")) : dir_of(argv[0]);
+  // Without -d, look where a database is likely to already be: beside this
+  // executable, then wherever ASTAP installed one. The solver takes a single
+  // directory, so the choice is made here; the first that holds a readable
+  // database wins, and if none does the original path is left in place so the
+  // solver reports the failure it would have reported anyway.
+  if (has("d")) {
+    settings.database_path = with_separator(val("d"));
+  } else {
+    settings.database_path = with_separator(dir_of(argv[0]));
+    astap::StarDatabase probe;
+    for (const std::string &dir : astap::default_database_directories())
+      if (probe.select(with_separator(dir), has("D") ? val("D") : "auto", 1.0)) {
+        settings.database_path = with_separator(dir);
+        break;
+      }
+  }
 
   const std::string filename = val("f");
 

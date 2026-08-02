@@ -60,7 +60,12 @@ namespace astap {
   std::string with_separator(std::string dir);
 
   struct SolveServiceSettings {
-    std::string database_path;      // directory holding the .1476 / .290 files
+    // Directory holding the .1476 / .290 files. Empty searches
+    // default_database_directories(), which is beside the executable and then
+    // wherever ASTAP installs one; a directory named here is used on its own,
+    // because a caller who says where the database is should not silently get a
+    // different one.
+    std::string database_path;
     std::string database = "auto";  // abbreviation such as d80, or "auto"
 
     // Sets the index hash bin width as well as the match tolerance, so a cache
@@ -158,6 +163,10 @@ namespace astap {
     // Reads whatever rungs of the wanted ladder `path` holds into the slots that
     // are still empty.
     void take_tiers_from(const std::string &path, bool quiet, const LogFn &log);
+
+    // Selects the star database, searching the default locations when none was
+    // named. Records where it was found in settings_.database_path.
+    bool select_database(const LogFn &log);
 
     SolveServiceSettings settings_;
     StarDatabase db_;

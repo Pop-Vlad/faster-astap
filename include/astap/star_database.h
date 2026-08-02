@@ -29,6 +29,22 @@ namespace astap {
     kDatabase1476 = 1476, // .1476 files
   };
 
+  // The directory holding the running executable, with a trailing separator.
+  // Empty when the platform will not say.
+  std::string executable_directory();
+
+  // Where to look for a star database when nobody said where it is.
+  //
+  // A database is gigabytes and is downloaded once, so the overwhelmingly likely
+  // situation is that the machine already has one because it already has ASTAP.
+  // Looking where ASTAP puts it costs nothing and saves the user from repeating
+  // themselves; a caller who names a directory is still taken at their word and
+  // nothing below is consulted.
+  //
+  // In order: beside this executable, which is where a self-contained
+  // distribution puts both; then the places ASTAP's own installers use.
+  std::vector<std::string> default_database_directories();
+
   class StarDatabase {
   public:
     // Select a star database, report false when none is found.

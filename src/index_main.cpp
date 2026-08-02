@@ -158,7 +158,9 @@ int main(int argc, char **argv) {
   if (has("threads")) astap::set_thread_count((unsigned) std::atoi(val("threads").c_str()));
 
   astap::SolveServiceSettings ss;
-  ss.database_path = has("d") ? val("d") : dir_of(argv[0]);
+  // Empty means "look in the usual places": beside this executable, then where
+  // ASTAP installs its databases. -d overrides that outright.
+  ss.database_path = has("d") ? val("d") : "";
   ss.database = has("D") ? val("D") : "auto";
   ss.quad_tolerance = has("t") ? std::atof(val("t").c_str()) : 0.007;
   // -tiers names a ladder outright; -maxtier just raises the ceiling of the
@@ -173,8 +175,15 @@ int main(int argc, char **argv) {
   // --- report the cache and stop ---------------------------------------------
   if (has("cacheinfo")) {
     astap::StarDatabase db;
-    const std::string dbpath = astap::with_separator(ss.database_path);
-    const bool have_db = db.select(dbpath, ss.database, 1.0);
+    // The same search the solve would do, so the report names the database a
+    // solve would actually use.
+    bool have_db = false;
+    if (!ss.database_path.empty()) {
+      have_db = db.select(astap::with_separator(ss.database_path), ss.database, 1.0);
+    } else {
+      for (const std::string &dir : astap::default_database_directories())
+        if ((have_db = db.select(astap::with_separator(dir), ss.database, 1.0))) break;
+    }
     const std::string db_name = have_db ? db.name() : "unknown";
     const int db_type = have_db ? db.database_type() : 0;
     const std::string ladder_file =
@@ -182,7 +191,8 @@ int main(int argc, char **argv) {
             ? astap::default_index_cache_path(db_name, db_type, ss.quad_tolerance)
             : ss.index_cache;
 
-    std::cout << "star database: " << (have_db ? db.name() : "(none found in " + dbpath + ")")
+    std::cout << "star database: "
+              << (have_db ? db.name() + " in " + db.path() : std::string("(none found)"))
               << "\nladder wanted:";
     for (double d : ss.ladder) std::cout << " " << d;
     std::cout << "\n";

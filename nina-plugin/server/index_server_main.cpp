@@ -688,9 +688,9 @@ int main(int argc, char **argv) {
   const std::string config_path =
       has("config") ? val("config") : directory_of(exe) + "/faster-astap.ini";
   Config config = read_config(config_path);
-  // A database directory the settings file does not give is looked for beside
-  // the executable, which is where astap_index_solve looks too.
-  if (config.database_path.empty()) config.database_path = directory_of(exe);
+  // A database directory that neither the settings file nor the command line
+  // gives is left empty, which sends the service to the usual places: beside
+  // this executable, then wherever ASTAP installed one.
   if (has("d")) config.database_path = val("d");
   if (has("D")) config.database = val("D");
   if (has("tiers")) config.tiers = val("tiers");
