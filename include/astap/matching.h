@@ -36,6 +36,25 @@ namespace astap {
   // See Montenbruck & Pfleger, Astronomy on the personal computer.
   bool lsq_fit(const RowList &a_matrix, std::vector<double> b_matrix, SolutionVector &x_matrix);
 
+  // How far a solution misses the references it was fitted to: the median
+  // distance between where (sx, sy) puts each image quad centre and where the
+  // matched reference quad actually is, in the units of b (arcsec here).
+  //
+  // Median rather than RMS, because this exists to be compared between two
+  // solutions and RMS lets one bad pair out of hundreds decide the comparison.
+  // Note that a solution can miss the sky while fitting its own references
+  // closely, so this measures self-consistency, not accuracy.
+  //
+  // Returns a negative value when there is nothing to measure.
+  double median_fit_residual(const RowList &a_xy_positions, const std::vector<double> &bx,
+                             const std::vector<double> &by, const SolutionVector &sx,
+                             const SolutionVector &sy);
+
+  // The same measure for a model that is not a solution vector: `px`, `py` are
+  // where it puts each reference, in the units of b.
+  double median_residual(const std::vector<double> &px, const std::vector<double> &py,
+                         const std::vector<double> &bx, const std::vector<double> &by);
+
   // Brute force hash code matching, used for fewer than 120 database quads.
   bool find_fit(MatchState &st, int minimum_count, double quad_tolerance,
                 const std::function<void(const std::string &)> &log = nullptr);

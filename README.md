@@ -19,6 +19,10 @@ digit for digit; `astap_index_solve` does everything else faster.
 Both read the same star databases as the original, take the same options, and
 write the same `.ini` and `.wcs` files, so either can stand in for `astap_cli`.
 
+[DESIGN.md](DESIGN.md) has the rest: how the matching works, the depth ladder the
+index solver rests on, where each solver stops working and why, and how the port
+was made fast.
+
 ## Quick start
 
 ```sh
@@ -116,22 +120,60 @@ Things worth noting:
 ### Capability, not just speed
 
 Speed is only half the question — a solver that is fast because it quietly gives
-up on hard images is not faster. Over a 40 image corpus fetched from NASA
-SkyView (`tools/fetch_skyview_corpus.py`), spanning 0.5° to 10° fields, the
-galactic plane to the galactic pole, both celestial poles and the RA 0h
-wraparound, with ground truth taken from each file's own WCS:
+up on hard images is not faster. The corpus is 120 images from NASA SkyView
+(`tools/fetch_skyview_corpus.py`): eight fields from the galactic plane to the
+galactic pole, both celestial poles and the RA 0h wraparound, cut at ten sizes
+from 0.05° to 10°. Below one degree every field is taken twice, shallow (2MASS-J,
+400-4000 detected stars/deg² here) and deep (DSS2 Red, 1500-6300), because depth
+decides which index tier can solve an image and one survey would report a solve
+rate that is really a statement about the cutout. Ground truth is the WCS
+SkyView wrote into each file. Everything below is blind — no position, no field
+size.
 
-| | |
-| --- | --- |
-| `astap_solve` solved | 28/40 |
-| `astap_index_solve` solved | **40/40** |
-| images the port solves that the index misses | **0** |
-| position error against the sky | median 0.15 px, worst 2.2 px |
+| | port | index, default ladder | ceiling 3600 |
+| --- | --- | --- | --- |
+| solved | 69/120 | 80/120 | **92/120** |
+| index cache | — | 2.7 GB | 10.0 GB |
+| index build | — | 5 s | 24 s |
 
-The twelve extra are the 5° and 10° fields, where the spiral's auto-FOV sweep
-gives up. `tools/corpus_harness.cpp` runs both solvers and exits non-zero if the
-index solver ever loses an image the port could solve; that is the acceptance
-gate for any change to it.
+By field size, and this is the whole story in one table:
+
+| field | images | port | index, default | index, ceiling 3600 |
+| --- | --- | --- | --- | --- |
+| 0.05° | 8 | 0 | 0 | 0 |
+| 0.1° | 16 | 3 | 0 | 5 |
+| 0.15° | 16 | 2 | 3 | 10 |
+| 0.25° | 16 | 13 | 13 | 13 |
+| 0.35° | 16 | 15 | 16 | 16 |
+| 0.5° | 16 | 16 | 16 | 16 |
+| 1° | 8 | 7 | 8 | 8 |
+| 2° | 8 | 8 | 8 | 8 |
+| 5° | 8 | 4 | 8 | 8 |
+| 10° | 8 | 1 | 8 | 8 |
+
+The two index columns are identical at every size from 0.25° up, which is the
+point of [density matching](DESIGN.md#small-fields-and-where-the-ladder-ends): the default
+2.7 GB cache reaches as far as the 10 GB one until the fields get small enough
+that thinning the image would leave too few stars. Buying the deep rungs is worth
+it below 0.25° and pointless above.
+
+The two solvers fail at opposite ends, for opposite reasons. At 5° and 10° the
+spiral's auto-FOV sweep gives up and the index takes all sixteen. Below half a
+degree the port's blind sweep is guessing the field size off a geometric grid
+that stops at 0.37°, so it degrades from 15/16 at 0.35° to 2/16 at 0.15°, while
+the index — which never needs the field size — holds 16/16 down to 0.35° on the
+stock cache and is ahead of the port at every size below 0.5°. Accuracy is the
+same either way: median 0.23 px for the index and 0.27 px for the port against
+the sky, and the worst cases are the DSS plates' own astrometry rather than the
+fit.
+
+Position error is quoted in pixels throughout, which for the small fields is the
+only honest unit: 60 arcsec is a sixth of a 0.1° frame.
+
+`tools/corpus_harness.cpp` runs both solvers and is the acceptance gate for any
+change to the index solver; see [the capability
+gate](DESIGN.md#the-capability-gate-for-the-index-solver) for what it currently
+reports and what it holds the solver to.
 
 ## Usage
 
@@ -190,100 +232,40 @@ astap_index_solve -f image.fits [options] [more.fits ...]
 
 -i        index cache file, overriding the default location
 -tiers    d1,d2,… depth ladder in stars/deg² for a newly built index
+-maxtier  d  raise the default ladder's ceiling to d stars/deg², for fields
+             below 0.25°. Adds a rung of 2.5 GB at 1800 and 4.8 GB at 3600
 -rebuild  rebuild the index even when a usable cache exists
 -nocache  build in memory, neither read nor write a cache
--cacheinfo  report the cache that would be used, then exit
+-cacheinfo  report which rungs are cached, then exit
 ```
 
 Passing several images to one invocation is much faster than one invocation per
 image: the index is read once.
 
-#### Depth tiers, and making the index smaller
+#### The index cache
 
-The index is a ladder of depth tiers, and which tier solves an image depends on
-how many stars the image yielded per square degree. That is not a tuning detail,
-it is the central constraint: a database quad is only findable when all four of
-its stars were bright enough to be *detected in the image*, so an index built too
-deep holds quads whose stars the image never saw, and one built too shallow has
-too few. A tier reaches about a factor of two in image density either side of
-itself, which is why the default ladder steps by 2.5x.
+The index is built once per star database and cached under
+`~/.cache/faster-astap/` (`$XDG_CACHE_HOME` is honoured;
+`%LOCALAPPDATA%\faster-astap\cache\` on Windows), one file per depth rung, about
+2.7 GB in total for D80. Rungs are independent files, so ladders compose: adding
+a deeper one leaves the rest alone, `-cacheinfo` lists what exists, and deleting
+a rung's file reclaims its space.
 
-Whole sky, D80, on a 13600K — 12 tiers, 61.6 M quads, 3.1 GB resident (2.7 GB on
-disk), 5.1 s to build:
-
-| tier (stars/deg²) | quads | size | | tier | quads | size |
-| --- | --- | --- | --- | --- | --- | --- |
-| 0.5 | 0.14 M | 19 MB | | 32 | 0.98 M | 59 MB |
-| 1 | 0.33 M | 28 MB | | 60 | 1.9 M | 101 MB |
-| 2 | 0.73 M | 47 MB | | 125 | 3.9 M | 198 MB |
-| 4 | 1.5 M | 85 MB | | 250 | 7.8 M | 385 MB |
-| 8 | 0.24 M | 24 MB | | 500 | 15.6 M | 759 MB |
-| 16 | 0.49 M | 35 MB | | 900 | 28.0 M | 1358 MB |
-
-The four sparsest rungs are the ones built with the larger quad groups described
-below, which is why they do not fall off smoothly. The two deepest rungs hold
-two thirds of the whole ladder, so if you know your images are not deep, `-tiers`
-cuts the index down sharply for free. A typical amateur frame yields 100-500
-stars/deg²:
+Two options change what gets built, and both cost disk rather than accuracy:
 
 ```sh
-# 1.28 GB instead of 2.7 GB, covering roughly 30-1000 stars/deg²
+# smaller: drop the rungs your images will never use. 1.28 GB instead of 2.7,
+# covering roughly 30-1000 stars/deg^2, which suits a typical amateur frame
 astap_index_solve -f image.fits -d <db> -tiers 60,125,250,500
+
+# deeper: for fields below 0.25°, where the default ladder runs out of depth.
+# Adds 7.3 GB, built and cached once
+astap_index_solve -f image.fits -d <db> -maxtier 3600
 ```
 
-That halves the cache and, because the per-run cost is dominated by reading it,
-takes a single solve from 1.65 s to 0.91 s. Dropping the 900 rung is where
-almost all of the saving is — trimming only the sparse end is not worth doing,
-since those rungs are tiny and are exactly what lets it solve 5-10° fields.
-Changing `-tiers` invalidates the cache, so the next run rebuilds it (2.3 s
-here).
-
-#### The second pass against the database, and SIP
-
-Once the field is known, the solver reads the star database *once* at that
-position — at a depth matched to the image's own star count, over a square large
-enough to take in the whole frame — and redoes the match there. This is the same
-work the spiral does at each of its many positions, done once at the right one.
-
-End to end, including rebuilding the image quads, the match and the cubic fits.
-It costs around 0.5ms. Against a 5 ms solve that is ~18%. `-progress` reports it per image.
-
-It buys two things. Accuracy, because the index's own fit rests on quad centres
-alone: over the corpus the median error drops from 0.214 px to 0.145 px, and the
-worst individual gains are large (a 10° field went from 0.67 px to 0.07 px). And
-SIP, because a cubic distortion fit needs at least twenty matched quads, which
-the raw index consensus reaches on 13 of 40 corpus images and the second pass
-lifts to 19.
-
-`-norefine` turns it off. `-sip` adds the coefficients, which go to the `.wcs`
-file (the `.ini` format has no place for them) and set `CTYPE1/2` to
-`RA---TAN-SIP`. When there are too few quads the solver says so and writes a linear WCS.
-
-#### Why it solves wide fields the port cannot
-
-Quads are normally built from each star's three nearest neighbours, one per star.
-At a few stars per square degree that is fragile: a quad matches only when the
-image and the catalogue picked the same four stars, so a single detection the
-catalogue subset lacks changes which three neighbours a star has and replaces its
-quad outright. A 10° field at 1 star/deg² yields only 76 quads, with no
-redundancy to absorb that.
-
-So when the ordinary pass finds nothing, the solver rebuilds the quads from every
-combination of each star's six nearest — 15 per star, 1024 quads on that field
-instead of 76, which took its true matches from 3 to 15. It is a strict superset,
-so it can only add matches; it is held back as a retry purely because it costs
-fifteen times the index queries. Three of the 40 corpus images need it, all at
-1-8 stars/deg² and 5-10°.
-
-The cache lives at `~/.cache/faster-astap/<database>_<type>_t<tolerance>.qix`
-(`$XDG_CACHE_HOME` is honoured), one file per star database, so several
-databases can coexist. It is ~2.7 GB for the default 12 tier ladder over D80. A
-cache written by a different version, byte order, tolerance or ladder is
-rejected and rebuilt rather than partially trusted, so a stale one fails loudly
-instead of matching against the wrong thing.
-
-A star database is required — the same `.1476`, `.290` or `.001` files the
-original uses, downloadable from www.hnsky.org.
+Neither is needed for ordinary work — the default ladder covers 0.25° upwards.
+[DESIGN.md](DESIGN.md#the-index-solvers-depth-ladder) explains what a rung is,
+why the ceiling sets the smallest field, and what the measurements say.
 
 ## Build
 
@@ -373,177 +355,3 @@ the same on any platform.
 implementations (astropy, i.e. CFITSIO, for the compressed FITS variants, and
 Pillow for PNG/TIFF/JPEG), pixel by pixel and including the row order.
 
-## The method
-
-```
-      => Image <=                                    |  => Star database <=
- 1) Find background, noise and star level            |
- 2) Find stars and their CCD x, y position           | Extract the same amount of stars
-    (standard coordinates)                           | (area corrected) from the area of
-                                                     | interest, convert the α, δ equatorial
-                                                     | coordinates into standard coordinates
- 3) Build the smallest irregular tetrahedrons        | Idem
-    ("quads") from four close stars, calculate the   |
-    six distances and the mean x,y of the quad       |
- 4) Sort the six distances, d1 longest, d6 shortest  | Idem
- 5) Scale them as (d1, d2/d1 … d6/d1) — the hash code| Idem
-
-                        => matching process <=
- 6) Find hash code matches where the five ratios agree within a small tolerance.
- 7) Take the median of the d1_found/d1_reference ratios, drop the outliers.
- 8) Solve the overdetermined system A·S = X_ref for the six plate constants
-    (least squares, Givens rotations), then derive the image centre position,
-    the pixel scale and the rotation.
-```
-
-Steps 1-5 are the same for both solvers. They differ in step 6, in how they find
-the database quads to compare against.
-
-**`astap_solve` walks a squared spiral** over the sky from the start position,
-reading the database and rebuilding its quads at every position until a match is
-found, then re-solves once from the found position for maximum accuracy. This is
-the original algorithm. Its cost is the distance from the start position, and a
-blind solve on this machine issues about 273 000 database queries.
-
-**`astap_index_solve` looks the quads up.** The hashes of the whole sky are built
-once into an index, so a solve is a single pass over the image's ~90 quads
-against it. The catch is that a quad is only findable when all four of its stars
-were bright enough to be detected in the image, and one index commits to one
-depth — so the index is a *ladder* of depth tiers from 0.5 to 900 stars/deg², and
-the solver sweeps it. Candidate matches then vote jointly on plate scale and sky
-position, and the winning cluster has to survive a RANSAC consensus before it
-reaches the same least squares fit and the same acceptance checks the port uses.
-
-Hash ratios are stored as fp32 in the index: over two million quads the worst
-deviation from the fp64 value is 3.2e-7, against a matching tolerance of 0.007 —
-a margin of more than 20 000x — and the final fit is fp64 throughout.
-
-## Code Layout
-
-| File                       | Contents                                                                                       |
-|----------------------------|------------------------------------------------------------------------------------------------|
-| `include/astap/types.h`    | `ImageArray`, `RowList` (the Pascal `Timage_array` / `Tstar_list`), `Header`                   |
-| `astro_math.{h,cpp}`       | median, angular separation, gnomonic projection both ways, position angle, sexagesimal parsing |
-| `image/image_io.{h,cpp}`   | `load_image`, the dispatch on the extension and the synthetic FITS header                      |
-| `image/fits.{h,cpp}`       | FITS reader, plain and tile compressed, and the FITS header writer                             |
-| `image/rice.{h,cpp}`       | Rice and GZIP tile decoding, from CFITSIO's `ricecomp.c` by way of the Pascal                  |
-| `image/image_pnm.cpp`      | Netpbm and Portable Float Map, no dependencies                                                 |
-| `image/image_bmp.cpp`      | Windows bitmap, no dependencies                                                                |
-| `image/image_{png,jpeg,tiff,raw}.cpp` | the optional decoders, one system library each                                      |
-| `star_detection.{h,cpp}`   | steps 1–2: `get_hist`, `get_background`, `hfd`, `find_stars`                                   |
-| `quads.{h,cpp}`            | steps 3–5: `find_quads`, `find_many_quads`                                                     |
-| `matching.{h,cpp}`         | steps 6–8: `find_fit`, `find_fit_using_hash`, `lsq_fit`, `find_offset_and_rotation`            |
-| `star_database.{h,cpp}`    | `.290` / `.1476` / `.001` database reader, tile selection                                      |
-| `calc_trans_cubic.{h,cpp}` | cubic fit behind the SIP coefficients                                                          |
-| `solver.{h,cpp}`           | `Solver::solve` — spiral search, WCS derivation, `.ini` / `.wcs` output                        |
-| `parallel.{h,cpp}`         | thread pool and range splitting used by the parallel stages                                    |
-| `src/main.cpp`             | `astap_solve`, modelled on `astap_command_line.lpr`                                            |
-| `quad_index.{h,cpp}`       | the whole-sky quad index: tier ladder build, binned query, on-disk cache                       |
-| `index_solver.{h,cpp}`     | joint scale/position vote, RANSAC consensus, fit                                               |
-| `src/index_main.cpp`       | `astap_index_solve`                                                                            |
-| `quad_batch.{h,cpp}`       | quad construction for a whole batch of search positions, over the thread pool                  |
-| `tools/corpus_harness.cpp` | runs both solvers over a corpus and reports the capability gate                                |
-| `tools/fetch_skyview_corpus.py` | downloads the test corpus from NASA SkyView, with ground truth                            |
-| `tools/png_to_fits.py`     | PNG/TIFF/JPEG to 16 bit FITS, for a build without the image libraries                          |
-| `tools/make_test_images.py` | writes the PNG/TIFF/JPEG reference files `image_io_tests` reads from `tests/data`             |
-
-## Verification
-
-`solver_tests` covers the numerics (projection round trip, `lsq_fit`, `smedian`,
-sexagesimal parsing), star detection on a synthetic field with planted
-gaussians, quad matching that has to recover a known rotation/scale/offset, the
-`find_many_quads` path for sparse fields, and the database tile numbering.
-
-The port's own output is the tighter check: its blind and hinted `.ini` must stay
-**bit identical** across refactors, and every optimisation in this README was
-accepted only after that held. Save an `.ini` before a change and `diff` it
-after; only the `CMDLINE=` line may differ.
-
-### The capability gate for the index solver
-
-Bit-identity is not available for the index solver — it is a different algorithm
-and will not agree to the last digit. Its gate is statistical instead, and it is
-a subset relation rather than a solve rate: **it does not have to solve images
-the port cannot, but it must not lose any the port can.**
-
-```sh
-python3 tools/fetch_skyview_corpus.py --out corpus   # ~25 min, resumable
-./build/corpus_harness corpus /path/to/database --csv results.csv
-```
-
-Every image carries the WCS SkyView wrote when it made the cutout, so each solve
-is checked against the sky rather than against the other solver. The harness
-exits non-zero if the index solver misses anything the port solved. It currently
-reports 28/40 for the port, 40/40 for the index solver, and 0 gate failures.
-
-## How the port was made fast
-
-Every optimisation below was checked to produce a **bit-identical** solution to
-the unoptimised port, at every thread count. The starting point was a direct
-translation of the Pascal that solved the sample blind in 11.9 s; the changes
-below and the parallel search took that to about 3 s.
-
-A blind solve and a hinted solve stress completely different code. `perf` on the
-original port:
-
-* blind — `find_many_quads` 47%, `find_quads` 16%, `StarDatabase::read_star` 15%:
-  the spiral search rebuilds the database quads at every sky position.
-* hinted — `load_fits` 49%, `bin_mono_and_crop` 16%: the image never gets read
-  more than once, so ingest dominates.
-
-What was changed:
-
-1. **`find_many_quads` distance table.** All C(7,4) = 35 quads of a group are
-   built from the same 7 stars, so their six side lengths are a subset of the
-   group's 21 pairwise distances. Computing those once per star instead of six
-   per quad cuts 210 square roots per star down to 21. 172 → 56 µs per call at
-   60 database stars.
-2. **Duplicate quad rejection in O(1).** The original scans every quad found so
-   far. A uniform grid with cell size 1.0 gives the *same* answer — two centres
-   with |dx| < 1 and |dy| < 1 are at most one cell apart, so probing the 3×3
-   neighbourhood is exactly equivalent. The grid is two flat arrays (bucket
-   heads plus a next-index chain) reused across calls; a first attempt using a
-   vector per bucket was *slower* than the linear scan it replaced, because this
-   runs once per spiral position.
-3. **Parallel spiral search**, the main win for blind solves. Positions are
-   evaluated in batches; the lowest index that solves wins. That is exactly what
-   the sequential search returns, since it stops at the first solving position
-   and batches are generated in spiral order. Each worker has its own database
-   file handle, tile cache and match state. The batch starts at one position and
-   grows, so a solve that succeeds immediately never pays for a parallel batch.
-4. **`load_fits`**: the per-pixel `switch (BITPIX)` is hoisted out of the pixel
-   loop and a whole plane is read at once, which lets the byte swap vectorise;
-   the conversion then runs in parallel. `measured_max` is a max-reduction, so
-   it is order independent. The one order-dependent case — a NaN taking the
-   running maximum — is detected and redone sequentially.
-5. **`bin_mono_and_crop`**: restructured so each source row is walked once,
-   sequentially, with a row accumulator. Every output pixel still sums its
-   inputs in the original order (colour, row, column), so the result is
-   unchanged. Parallel over output rows.
-6. **`get_hist`**: per-thread partial histograms. The pixel sum is accumulated
-   as `int64` rather than `double`, which is both exact and independent of the
-   thread count.
-7. **Allocation removal in the inner loops**: `hfd()` sorted its background
-   annulus through a heap-allocated copy on every star candidate (now in place
-   on the stack, as the Pascal does), and the sigma-clipped mean reallocated a
-   65500-bin histogram per image tile.
-
-Thread scaling, blind solve from 90° off, best of three:
-
-| threads | 1    | 2    | 4    | 8    | 14   | 20   |
-|---------|------|------|------|------|------|------|
-| seconds | 9.86 | 7.13 | 5.01 | 3.26 | 3.13 | 3.47 |
-
-Past about 8 threads this flattens and stops being monotonic — a repeat of the
-sweep can put 20 threads ahead of 14. That is not measurement noise alone. The
-spiral evaluates positions in batches sized from the thread count, so the count
-decides which batch straddles the answer and how much speculative work that
-batch does before one of its positions solves. On the throughput-bound part of
-the curve (1 to 8 threads) scaling is clean.
-
-The default is one thread per thread the process may actually run on,
-SMT siblings included — the spiral search gives every sibling independent work,
-so the last step from 14 to 20 threads is still worth about 14%. The count comes
-from the CPU affinity mask rather than from the size of the machine, so it stays
-correct under `taskset`, inside a container, or on a batch scheduler that pins
-jobs to a subset of the CPUs. `-threads N` overrides it.

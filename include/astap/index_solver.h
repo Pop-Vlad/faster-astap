@@ -93,6 +93,15 @@ namespace astap {
     double quad_tolerance_used = 0.007;
     // Set once refine_with_database has improved this solution.
     bool refined = false;
+
+    // The linear fit this solution came from, and the tangent point its standard
+    // coordinates are measured about. Kept so a later stage can ask where this
+    // model puts a point without inverting the WCS: the WCS is derived from
+    // these through ASTAP's crota/flipped convention, which is not a relation
+    // worth re-deriving in reverse.
+    bool fit_valid = false;
+    SolutionVector fit_x{}, fit_y{};  // pixels -> arcsec about (fit_ref_ra, fit_ref_dec)
+    double fit_ref_ra = 0, fit_ref_dec = 0;
   };
 
   // `image_quads` comes from find_quads on the detected stars, in image pixel
@@ -136,6 +145,12 @@ namespace astap {
     bool sip_valid = false;
     bool kept = false;  // false when the refit was discarded as less well supported
     SipCoefficients sip;
+    // Median residual over the second pass's own matched quads, in arcsec, for
+    // the incoming index solution and for the refit. Both models are measured
+    // against the same references, which is the only way the two numbers mean
+    // anything next to each other. -1 when it could not be measured.
+    double residual_before = -1;
+    double residual_after = -1;
     std::string reason;
   };
 

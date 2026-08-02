@@ -10,11 +10,13 @@
 // so it is cached under ~/.cache/faster-astap and reused. The first run on a new
 // star database pays for the build; later runs do not.
 
+#include <cctype>
 #include <chrono>
 #include <cstdlib>
 #include <cmath>
 #include <cstring>
 #include <fstream>
+#include <initializer_list>
 #include <iostream>
 #include <map>
 #include <string>
@@ -203,20 +205,49 @@ int main(int argc, char **argv) {
     if (i) cmdline += " ";
     cmdline += argv[i];
   }
+  // Which option takes a value has to be stated, not guessed. Guessing it as
+  // "the next token, unless it starts with a dash" reads
+  // `astap_index_solve -progress a.fits b.fits` as -progress=a.fits and then
+  // solves only b.fits — an image silently dropped, which is the worst way to
+  // get this wrong. An unknown option is a flag and says so, so that a typo like
+  // -maxtiers does not quietly leave the default ladder in place.
+  auto in_list = [](const std::string &k, std::initializer_list<const char *> names) {
+    for (const char *n : names)
+      if (k == n) return true;
+    return false;
+  };
+  auto takes_value = [&](const std::string &k) {
+    return in_list(k, {"f", "d", "D", "fov", "s", "t", "m", "z", "o", "i", "tiers", "maxtier",
+                       "threads"});
+  };
+  auto is_flag = [&](const std::string &k) {
+    return in_list(k, {"sip", "norefine", "wcs", "log", "progress", "rebuild", "nocache",
+                       "cacheinfo", "h", "-help"});
+  };
+  // A token starting with a dash is a value only when it is a negative number.
+  auto looks_like_value = [](const char *s) {
+    return s[0] != '-' ||
+           (s[1] != '\0' && (std::isdigit(static_cast<unsigned char>(s[1])) || s[1] == '.'));
+  };
+
   for (int i = 1; i < argc; i++) {
     std::string a = argv[i];
     if (a.empty() || a[0] != '-') {
       images.push_back(a); // bare file name, so a shell glob can be passed
       continue;
     }
-    std::string key = a.substr(1);
-    if (i + 1 < argc && argv[i + 1][0] != '-') {
-      if (key == "f") images.push_back(argv[i + 1]);
-      else opt[key] = argv[i + 1];
-      i++;
-    } else {
+    const std::string key = a.substr(1);
+    if (!takes_value(key)) {
+      if (!is_flag(key)) std::cerr << "Ignoring unknown option " << a << "\n";
       opt[key] = ""; // flag without a value
+      continue;
     }
+    if (i + 1 >= argc || !looks_like_value(argv[i + 1])) {
+      std::cerr << "Option " << a << " needs a value, ignoring it.\n";
+      continue;
+    }
+    if (key == "f") images.push_back(argv[++i]);
+    else opt[key] = argv[++i];
   }
 
   auto has = [&](const char *k) { return opt.count(k) != 0; };
@@ -497,6 +528,10 @@ int main(int argc, char **argv) {
         log("Second pass: " + std::to_string(ref.nr_quads) + " quads matched against " +
             std::to_string(ref.nr_candidates) + " database quads in " +
             astap::float_to_str(refine_secs * 1000, 1) + " ms" +
+            (ref.residual_before >= 0
+                 ? ", residual " + astap::float_to_str(ref.residual_before, 3) + "\" -> " +
+                       astap::float_to_str(ref.residual_after, 3) + "\""
+                 : "") +
             (ref.kept ? "." : ", discarded: " + ref.reason));
       if (!ref.ok && progress) log("Second pass skipped: " + ref.reason);
       if (ref.sip_valid) {

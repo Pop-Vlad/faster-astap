@@ -113,6 +113,7 @@ namespace {
     bool idx_many = false;
     bool idx_refined = false;
     int idx_refine_quads = 0;
+    double idx_res_before = -1, idx_res_after = -1;  // arcsec, same references
     std::string idx_reason;
   };
 
@@ -325,6 +326,8 @@ int main(int argc, char **argv) {
           refine_with_database(db, c.stars, c.bwidth, c.bheight, r, is, false);
       c.idx_refined = rr.kept;
       c.idx_refine_quads = rr.nr_quads;
+      c.idx_res_before = rr.residual_before;
+      c.idx_res_after = rr.residual_after;
     }
     c.idx_secs = secs(s0, Clock::now());
     c.idx_error = r.solved ? arcsec_between(r.ra0, r.dec0, c.true_ra, c.true_dec) : 0;
@@ -391,13 +394,15 @@ int main(int argc, char **argv) {
     std::ofstream f(csv);
     f << "image,fov_deg,stars,density,in_ladder_range,port_solved,port_error_arcsec,port_secs,"
          "idx_solved,idx_error_arcsec,idx_secs,idx_tier,idx_inliers,idx_tiers_tried,"
-         "idx_many_quads,idx_refined,idx_refine_quads,idx_reason\n";
+         "idx_many_quads,idx_refined,idx_refine_quads,idx_res_before,idx_res_after,"
+         "idx_reason\n";
     for (const ImageCase &c : cases)
       f << basename_of(c.file) << "," << c.fov_deg << "," << c.nstars << "," << c.density << ","
         << c.in_range << "," << c.port_good << "," << c.port_error << "," << c.port_secs << ","
         << c.idx_solved << "," << c.idx_error << "," << c.idx_secs << "," << c.idx_tier << ","
         << c.idx_inliers << "," << c.idx_tiers_tried << "," << c.idx_many << ","
-        << c.idx_refined << "," << c.idx_refine_quads << ",\"" << c.idx_reason << "\"\n";
+        << c.idx_refined << "," << c.idx_refine_quads << "," << c.idx_res_before << ","
+        << c.idx_res_after << ",\"" << c.idx_reason << "\"\n";
     std::printf("wrote %s\n", csv.c_str());
   }
   return gate_fail == 0 ? 0 : 1;

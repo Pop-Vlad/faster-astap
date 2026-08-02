@@ -168,6 +168,11 @@ namespace astap {
 
       wcs_from(sx, sy, ref_ra, ref_dec, width, height, out);
       out.nr_references = static_cast<int>(consensus.size());
+      out.fit_x = sx;
+      out.fit_y = sy;
+      out.fit_ref_ra = ref_ra;
+      out.fit_ref_dec = ref_dec;
+      out.fit_valid = true;
       out.solved = true;
       return true;
     }
@@ -690,6 +695,46 @@ namespace astap {
     // evidence.
     if (m.nr_references < std::max(s.minimum_quads, io.nr_inliers)) {
       out.reason = "fewer quads than the index consensus, keeping that";
+      return out;
+    }
+
+    // ...and only when it actually fits better. A count of quads says nothing
+    // about scatter: a refit backed by four hundred quads can sit further from
+    // all of them than the index solution built on seventeen, and over the
+    // corpus that is not hypothetical — it is where the largest position error
+    // came from.
+    //
+    // The comparison has to be against the same references, or it is rigged.
+    // The index consensus was chosen by RANSAC for agreeing with its own model,
+    // so its residual over its own inliers is small by construction and would
+    // win almost every time. Both models are therefore measured over the second
+    // pass's matched quads, which neither of them selected.
+    //
+    // b holds those quads in standard coordinates in arcsec about (io.ra0,
+    // io.dec0). The refit is in that frame already. The incoming model is in its
+    // own, about the tangent point the vote used, so each of its predictions
+    // goes out to the sky and back down onto this frame — through the same two
+    // projections that built b, which is what makes the two numbers comparable.
+    out.residual_after = median_fit_residual(m.a_xy_positions, m.b_xrefpositions,
+                                             m.b_yrefpositions, m.solution_vector_x,
+                                             m.solution_vector_y);
+    if (io.fit_valid) {
+      const size_t n = m.a_xy_positions.count();
+      std::vector<double> px(n), py(n);
+      for (size_t i = 0; i < n; i++) {
+        const double x = m.a_xy_positions(0, i), y = m.a_xy_positions(1, i);
+        double ra, dec;
+        standard_equatorial(io.fit_ref_ra, io.fit_ref_dec,
+                            io.fit_x[0] * x + io.fit_x[1] * y + io.fit_x[2],
+                            io.fit_y[0] * x + io.fit_y[1] * y + io.fit_y[2], 1, ra, dec);
+        equatorial_standard(io.ra0, io.dec0, ra, dec, 1, px[i], py[i]);
+      }
+      out.residual_before = median_residual(px, py, m.b_xrefpositions, m.b_yrefpositions);
+    }
+
+    if (out.residual_before >= 0 && out.residual_after > out.residual_before) {
+      out.reason = "the refit sits further from the references than the index solution, keeping "
+                   "that";
       return out;
     }
     out.kept = true;

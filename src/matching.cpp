@@ -61,6 +61,35 @@ namespace astap {
     }
   } // namespace
 
+  double median_residual(const std::vector<double> &px, const std::vector<double> &py,
+                         const std::vector<double> &bx, const std::vector<double> &by) {
+    const size_t n = std::min(std::min(px.size(), py.size()), std::min(bx.size(), by.size()));
+    if (n == 0) return -1;
+
+    std::vector<double> d(n);
+    for (size_t i = 0; i < n; i++) {
+      const double ex = px[i] - bx[i], ey = py[i] - by[i];
+      d[i] = std::sqrt(ex * ex + ey * ey);
+    }
+    std::nth_element(d.begin(), d.begin() + static_cast<long>(n / 2), d.end());
+    return d[n / 2];
+  }
+
+  double median_fit_residual(const RowList &a_xy_positions, const std::vector<double> &bx,
+                             const std::vector<double> &by, const SolutionVector &sx,
+                             const SolutionVector &sy) {
+    const size_t n = std::min(a_xy_positions.count(), std::min(bx.size(), by.size()));
+    if (n == 0) return -1;
+
+    std::vector<double> px(n), py(n);
+    for (size_t i = 0; i < n; i++) {
+      const double x = a_xy_positions(0, i), y = a_xy_positions(1, i);
+      px[i] = sx[0] * x + sx[1] * y + sx[2];
+      py[i] = sy[0] * x + sy[1] * y + sy[2];
+    }
+    return median_residual(px, py, bx, by);
+  }
+
   bool lsq_fit(const RowList &a_matrix, std::vector<double> b_matrix, SolutionVector &x_matrix) {
     constexpr double tiny = 1E-10; // accuracy
 
