@@ -80,6 +80,11 @@ add_library(astap_image
         src/image/image_jpeg.cpp
         src/image/image_tiff.cpp
         src/image/image_raw.cpp
+        # Sits on top of both modules rather than inside either: it turns a file
+        # into a solution, so it needs the loader and the solver at once. It
+        # lives here because this is the library that already depends on both,
+        # and a third one holding a single translation unit would earn nothing.
+        src/solve_service.cpp
 )
 target_include_directories(astap_image PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
 # For the shared types, astro_math and the thread pool. Nothing in the solver
@@ -232,6 +237,16 @@ else ()
     set(ASTAP_RUNTIME_DEST bin)
 endif ()
 install(TARGETS astap_solve astap_index_solve RUNTIME DESTINATION ${ASTAP_RUNTIME_DEST})
+
+# --- the N.I.N.A. integration ------------------------------------------------
+# A module of its own, in nina-plugin/: a resident server that keeps the index in
+# memory between images, and the C# plugin that drives it. It consumes the
+# libraries above and adds nothing to them, so turning it off changes nothing
+# about the two solvers.
+option(ASTAP_NINA_INTEGRATION "Build the N.I.N.A. integration in nina-plugin/" ON)
+if (ASTAP_NINA_INTEGRATION AND EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/nina-plugin/CMakeLists.txt)
+    add_subdirectory(nina-plugin)
+endif ()
 
 # With the image libraries switched on, a Windows build links libpng, libjpeg,
 # libtiff, LibRaw and zlib as DLLs, and each of those pulls in more of its own

@@ -1,0 +1,49 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <!-- N.I.N.A. 3.x runs on .NET 8. A plugin built for a newer runtime will
+         not load into it, so this stays at net8.0 whatever SDK is installed. -->
+    <TargetFramework>net8.0-windows</TargetFramework>
+    <UseWPF>true</UseWPF>
+    <OutputType>Library</OutputType>
+    <RootNamespace>FasterAstap</RootNamespace>
+    <AssemblyName>FasterAstap</AssemblyName>
+    <Platforms>x64</Platforms>
+    <PlatformTarget>x64</PlatformTarget>
+    <LangVersion>latest</LangVersion>
+    <Nullable>disable</Nullable>
+    <GenerateAssemblyInfo>false</GenerateAssemblyInfo>
+    <AppendTargetFrameworkToOutputPath>false</AppendTargetFrameworkToOutputPath>
+    <!-- N.I.N.A. ships all of these itself and loads the plugin into its own
+         context; copying them next to the plugin would mean two copies of the
+         same assembly in one process. -->
+    <CopyLocalLockFileAssemblies>false</CopyLocalLockFileAssemblies>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- Reference assemblies only. N.I.N.A. supplies every one of these at
+         runtime, and a second copy beside the plugin is at best dead weight and
+         at worst a different build of the same assembly in one process. -->
+    <PackageReference Include="NINA.Plugin" Version="3.2.0.9001">
+      <IncludeAssets>compile</IncludeAssets>
+    </PackageReference>
+  </ItemGroup>
+
+  <!-- The solver that this plugin exists to drive, taken from the CMake build
+       and laid down beside the plugin assembly. The plugin points N.I.N.A.'s
+       ASTAP setting at this copy, so it has to travel with the plugin: the
+       whole thing then installs and uninstalls as one directory. -->
+  <PropertyGroup>
+    <IndexServerExe>$(MSBuildThisFileDirectory)..\..\build\nina-plugin\astap_index_server.exe</IndexServerExe>
+  </PropertyGroup>
+
+  <Target Name="CopyIndexServer" BeforeTargets="Build">
+    <Warning Condition="!Exists('$(IndexServerExe)')"
+             Text="astap_index_server.exe was not found at $(IndexServerExe). Build the CMake project first, or the plugin will have no solver to point at." />
+    <Copy Condition="Exists('$(IndexServerExe)')"
+          SourceFiles="$(IndexServerExe)"
+          DestinationFolder="$(OutDir)"
+          SkipUnchangedFiles="true" />
+  </Target>
+
+</Project>

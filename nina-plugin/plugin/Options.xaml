@@ -1,0 +1,99 @@
+<ResourceDictionary
+    x:Class="FasterAstap.Options"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+
+    <!--  N.I.N.A. finds this by a key of "<AssemblyTitle>_Options", so the name
+          here and the AssemblyTitle attribute have to agree exactly. The data
+          context is the FasterAstapPlugin instance.  -->
+    <DataTemplate x:Key="Faster ASTAP_Options">
+        <StackPanel Margin="10" Orientation="Vertical">
+
+            <TextBlock FontWeight="Bold" Text="Index server" />
+            <TextBlock Margin="0,4,0,0" Text="{Binding StatusSummary}" TextWrapping="Wrap" />
+            <TextBlock Margin="0,2,0,0" Text="{Binding TimingSummary}" TextWrapping="Wrap" />
+            <!--  Empty when there is nothing to say, which renders as nothing. A
+                  converter to collapse it would mean depending on one of
+                  N.I.N.A.'s resources resolving in this scope, for no gain.  -->
+            <TextBlock Margin="0,2,0,0" Text="{Binding Activity}" TextWrapping="Wrap" />
+
+            <StackPanel Margin="0,8,0,0" Orientation="Horizontal">
+                <Button Width="110"
+                        Margin="0,0,6,0"
+                        Command="{Binding StartServerCommand}"
+                        Content="Start server" />
+                <Button Width="110"
+                        Margin="0,0,6,0"
+                        Command="{Binding StopServerCommand}"
+                        Content="Stop server" />
+                <Button Width="110" Command="{Binding RefreshCommand}" Content="Refresh" />
+            </StackPanel>
+
+            <CheckBox Margin="0,12,0,0"
+                      Content="Use for plate solving (points N.I.N.A.'s ASTAP path at this solver)"
+                      IsChecked="{Binding UseForPlateSolving}" />
+            <TextBlock Margin="20,2,0,0"
+                       Opacity="0.7"
+                       Text="{Binding AstapLocationInUse, StringFormat='ASTAP path is now: {0}'}"
+                       TextWrapping="Wrap" />
+            <TextBlock Margin="20,2,0,0"
+                       Opacity="0.7"
+                       Text="N.I.N.A. has no way to list a plugin as a plate solver, so it still says ASTAP in the dropdown. Unticking this restores the previous path."
+                       TextWrapping="Wrap" />
+
+            <TextBlock Margin="0,16,0,0" FontWeight="Bold" Text="Star database" />
+            <StackPanel Margin="0,4,0,0" Orientation="Horizontal">
+                <TextBlock Width="150" Text="Database directory" VerticalAlignment="Center" />
+                <TextBox Width="380" Text="{Binding DatabaseDirectory, UpdateSourceTrigger=LostFocus}" />
+            </StackPanel>
+            <TextBlock Margin="150,2,0,0"
+                       Opacity="0.7"
+                       Text="The folder holding the .1476 or .290 files. Left empty, the ASTAP installation already configured is used."
+                       TextWrapping="Wrap" />
+
+            <TextBlock Margin="0,16,0,0" FontWeight="Bold" Text="Index" />
+            <StackPanel Margin="0,4,0,0" Orientation="Horizontal">
+                <TextBlock Width="150" Text="Depth tiers" VerticalAlignment="Center" />
+                <TextBox Width="200" Text="{Binding Tiers, UpdateSourceTrigger=LostFocus}" />
+                <TextBlock Margin="8,0,0,0"
+                           Opacity="0.7"
+                           Text="empty = all twelve (3.1 GB); e.g. 60,125,250,500 = 1.3 GB"
+                           VerticalAlignment="Center" />
+            </StackPanel>
+            <StackPanel Margin="0,4,0,0" Orientation="Horizontal">
+                <TextBlock Width="150" Text="Deepen ladder to" VerticalAlignment="Center" />
+                <TextBox Width="80" Text="{Binding MaxTier, UpdateSourceTrigger=LostFocus}" />
+                <TextBlock Margin="8,0,0,0"
+                           Opacity="0.7"
+                           Text="stars/deg² — 0 is off. Worth it below 0.25°, and costly: 1800 adds 2.5 GB, 3600 another 4.8."
+                           VerticalAlignment="Center" />
+            </StackPanel>
+            <StackPanel Margin="0,4,0,0" Orientation="Horizontal">
+                <TextBlock Width="150" Text="Worker threads" VerticalAlignment="Center" />
+                <TextBox Width="80" Text="{Binding Threads, UpdateSourceTrigger=LostFocus}" />
+                <TextBlock Margin="8,0,0,0"
+                           Opacity="0.7"
+                           Text="0 = one per hardware thread"
+                           VerticalAlignment="Center" />
+            </StackPanel>
+            <TextBlock Margin="150,2,0,0"
+                       Opacity="0.7"
+                       Text="{Binding Status.Densities, StringFormat='Resident tiers: {0}'}"
+                       TextWrapping="Wrap" />
+
+            <TextBlock Margin="0,16,0,0" FontWeight="Bold" Text="Lifetime" />
+            <StackPanel Margin="0,4,0,0" Orientation="Horizontal">
+                <TextBlock Width="150" Text="Stop when idle after" VerticalAlignment="Center" />
+                <TextBox Width="80" Text="{Binding IdleExitMinutes, UpdateSourceTrigger=LostFocus}" />
+                <TextBlock Margin="8,0,0,0"
+                           Opacity="0.7"
+                           Text="minutes — 0 keeps it up, which is what you want while imaging"
+                           VerticalAlignment="Center" />
+            </StackPanel>
+            <CheckBox Margin="0,6,0,0"
+                      Content="Stop the server when N.I.N.A. closes"
+                      IsChecked="{Binding StopServerOnExit}" />
+
+        </StackPanel>
+    </DataTemplate>
+</ResourceDictionary>

@@ -1,0 +1,44 @@
+/* Windows version resource.
+ *
+ * Not decoration. An imaging application that launches this program in ASTAP's
+ * place may check what it is about to run: N.I.N.A. reads
+ * FileVersionInfo.GetVersionInfo(exe).FileVersion and refuses to pass
+ * "-z 0" (automatic downsampling, which is its default) to anything reporting
+ * below 0.9.1.0. A MinGW build carries no version resource at all, so the
+ * version reads as empty and the check fails before a single image is solved.
+ *
+ * The number below is therefore an ASTAP compatibility level, not this project's
+ * version: it says "takes the options an ASTAP of this vintage takes". The real
+ * identity is in the product and file description strings.
+ */
+
+#include <winver.h>
+
+VS_VERSION_INFO VERSIONINFO
+FILEVERSION 1, 0, 0, 0
+PRODUCTVERSION 1, 0, 0, 0
+FILEFLAGSMASK VS_FFI_FILEFLAGSMASK
+FILEFLAGS 0
+FILEOS VOS_NT_WINDOWS32
+FILETYPE VFT_APP
+FILESUBTYPE VFT2_UNKNOWN
+BEGIN
+    BLOCK "StringFileInfo"
+    BEGIN
+        BLOCK "040904B0" /* US English, Unicode */
+        BEGIN
+            VALUE "CompanyName",      "faster-astap"
+            VALUE "FileDescription",  "ASTAP compatible plate solver, resident quad index"
+            VALUE "FileVersion",      "1.0.0.0"
+            VALUE "InternalName",     "astap_index_server"
+            VALUE "LegalCopyright",   "Algorithm (C) 2018-2026 Han Kleijn. MPL 2.0."
+            VALUE "OriginalFilename", "astap_index_server.exe"
+            VALUE "ProductName",      "faster-astap index solver"
+            VALUE "ProductVersion",   "1.0.0.0"
+        END
+    END
+    BLOCK "VarFileInfo"
+    BEGIN
+        VALUE "Translation", 0x409, 1200
+    END
+END

@@ -242,6 +242,12 @@ astap_index_solve -f image.fits [options] [more.fits ...]
 Passing several images to one invocation is much faster than one invocation per
 image: the index is read once.
 
+An imaging application cannot do that — it solves one frame at a time, in a
+fresh process, minutes apart, so it pays the index read every single solve and
+never sees the 5 ms. Keeping the index in memory between those invocations is
+what [`nina-plugin/`](nina-plugin/README.md) is for. It is a module of its own and
+changes nothing here; `-DASTAP_NINA_INTEGRATION=OFF` leaves it out of the build.
+
 #### The index cache
 
 The index is built once per star database and cached under
