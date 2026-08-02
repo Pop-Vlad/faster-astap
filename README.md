@@ -328,30 +328,12 @@ cmake --build build
 cmake --install build --prefix dist
 ```
 
-Copy `dist` anywhere, zip it, hand it to N.I.N.A.: it needs Windows 10 or newer, where the Universal CRT is part of
-the OS, and nothing else. In particular there is no Visual C++ redistributable
-to ship.
+You will find the 2 built executables in the **`dist` directory:
 
-Install into a directory that does not already exist, or at least an empty one.
-CMake skips files it considers up to date, so installing over a `dist` you have
-been editing by hand can leave you with a bundle that is missing a piece.
-
-#### One file, if you can give up the extra formats
-
-The bundle is a folder because the image libraries are separate DLLs. Turning
-them off leaves a single executable that depends on nothing outside Windows:
-
-```sh
-cmake -S . -B build-core -G Ninja -DCMAKE_BUILD_TYPE=Release \
-      -DASTAP_ZLIB=OFF -DASTAP_PNG=OFF -DASTAP_JPEG=OFF \
-      -DASTAP_TIFF=OFF -DASTAP_LIBRAW=OFF
-cmake --build build-core
 ```
-
-Both forms link libstdc++, libgcc and libwinpthread into the executable, which
-is what `ASTAP_STATIC_RUNTIME` does and is the default on Windows. There is no
-reason to turn it off unless you are deliberately packaging against shared
-MSYS2 runtime DLLs.
+astap_solve.exe
+astap_index_solve.exe
+```
 
 #### Running the tests
 

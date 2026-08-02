@@ -12,6 +12,35 @@ endif ()
 set(THREADS_PREFER_PTHREAD_FLAG ON)
 find_package(Threads REQUIRED)
 
+# A MinGW build otherwise needs libstdc++, libgcc and libwinpthread next to the
+# .exe or on PATH, and an .exe that will not start unless MSYS2 is on PATH is of
+# no use to the imaging application that launches it. So this is on by default
+# on Windows, where those libraries are not something the system provides
+# anyway; off elsewhere, where a package shares the system copies as it should.
+if (WIN32)
+    set(ASTAP_STATIC_RUNTIME_DEFAULT ON)
+else ()
+    set(ASTAP_STATIC_RUNTIME_DEFAULT OFF)
+endif ()
+option(ASTAP_STATIC_RUNTIME "Link the runtime and image libraries into the executables (Windows)"
+        ${ASTAP_STATIC_RUNTIME_DEFAULT})
+
+# The image libraries are linked from their static archives in the same build,
+# so the two executables are the whole distribution. -static is what makes the
+# linker prefer libfoo.a over the libfoo.dll.a import library for each -lfoo,
+# which is why the link line below has to come from pkg-config as -l flags
+# rather than as the absolute paths the CMake find modules return.
+set(ASTAP_STATIC_IMAGE_LIBS OFF)
+if (ASTAP_STATIC_RUNTIME AND WIN32)
+    if (MINGW)
+        add_link_options(-static-libgcc -static-libstdc++ -static)
+        set(ASTAP_STATIC_IMAGE_LIBS ON)
+    elseif (MSVC AND NOT CMAKE_VERSION VERSION_LESS 3.15)
+        cmake_policy(SET CMP0091 NEW)
+        set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
+    endif ()
+endif ()
+
 add_library(astap_solver
         src/astro_math.cpp
         src/parallel.cpp
@@ -59,63 +88,104 @@ target_link_libraries(astap_image PUBLIC astap_solver)
 
 set(ASTAP_IMAGE_FORMATS "FITS;FITS.fz (Rice);Netpbm;BMP")
 
+find_package(PkgConfig QUIET)
+
+# Adds one optional image library, and records the formats it brings.
+#
+# A static build asks pkg-config for the link line, because only that lists the
+# transitive dependencies: libtiff on its own needs jbig, webp, sharpyuv, zstd,
+# lzma, Lerc and deflate, and LibRaw needs lcms2 and OpenMP. That list is read
+# from the libraries' own metadata rather than written out here, so it keeps up
+# with them. Otherwise the ordinary CMake find module is used and the library
+# stays a DLL.
+#
+# A macro, not a function, so that appending to ASTAP_IMAGE_FORMATS is visible
+# to the caller.
+macro(astap_image_library pkg_module find_name imported_target define)
+    set(_astap_done FALSE)
+    if (ASTAP_STATIC_IMAGE_LIBS AND PkgConfig_FOUND)
+        pkg_check_modules(_astap_pc QUIET ${pkg_module})
+        if (_astap_pc_FOUND)
+            target_include_directories(astap_image PRIVATE ${_astap_pc_INCLUDE_DIRS})
+            # The static cflags matter as much as the libraries: LibRaw declares
+            # its symbols __declspec(dllimport) unless -DLIBRAW_NODLL says the
+            # link is static, and its .pc file is what knows that.
+            target_compile_options(astap_image PRIVATE ${_astap_pc_STATIC_CFLAGS_OTHER})
+            target_link_libraries(astap_image PRIVATE ${_astap_pc_STATIC_LDFLAGS})
+            set(_astap_done TRUE)
+        endif ()
+    endif ()
+    if (NOT _astap_done AND NOT "${find_name}" STREQUAL "")
+        find_package(${find_name} QUIET)
+        if (${find_name}_FOUND)
+            target_link_libraries(astap_image PRIVATE ${imported_target})
+            set(_astap_done TRUE)
+        endif ()
+    endif ()
+    if (_astap_done)
+        target_compile_definitions(astap_image PRIVATE ${define})
+        list(APPEND ASTAP_IMAGE_FORMATS ${ARGN})
+    endif ()
+endmacro()
+
 if (ASTAP_ZLIB)
     # Needed for the tiles fpack stores as GZIP because Rice did not shrink
     # them, and for a wholly GZIP compressed .fz.
-    find_package(ZLIB QUIET)
-    if (ZLIB_FOUND)
-        target_compile_definitions(astap_image PRIVATE ASTAP_WITH_ZLIB)
-        target_link_libraries(astap_image PRIVATE ZLIB::ZLIB)
-        list(APPEND ASTAP_IMAGE_FORMATS "FITS.fz (GZIP)")
-    endif ()
+    astap_image_library(zlib ZLIB ZLIB::ZLIB ASTAP_WITH_ZLIB "FITS.fz (GZIP)")
 endif ()
 
 if (ASTAP_PNG)
-    find_package(PNG QUIET)
-    if (PNG_FOUND)
-        target_compile_definitions(astap_image PRIVATE ASTAP_WITH_PNG)
-        target_link_libraries(astap_image PRIVATE PNG::PNG)
-        list(APPEND ASTAP_IMAGE_FORMATS "PNG")
-    endif ()
+    astap_image_library(libpng16 PNG PNG::PNG ASTAP_WITH_PNG "PNG")
 endif ()
 
 if (ASTAP_JPEG)
-    find_package(JPEG QUIET)
-    if (JPEG_FOUND)
-        target_compile_definitions(astap_image PRIVATE ASTAP_WITH_JPEG)
-        target_link_libraries(astap_image PRIVATE JPEG::JPEG)
-        list(APPEND ASTAP_IMAGE_FORMATS "JPEG")
-    endif ()
+    astap_image_library(libjpeg JPEG JPEG::JPEG ASTAP_WITH_JPEG "JPEG")
 endif ()
 
 if (ASTAP_TIFF)
-    find_package(TIFF QUIET)
-    if (TIFF_FOUND)
-        target_compile_definitions(astap_image PRIVATE ASTAP_WITH_TIFF)
-        target_link_libraries(astap_image PRIVATE TIFF::TIFF)
-        list(APPEND ASTAP_IMAGE_FORMATS "TIFF")
-    endif ()
+    astap_image_library(libtiff-4 TIFF TIFF::TIFF ASTAP_WITH_TIFF "TIFF")
 endif ()
 
 if (ASTAP_LIBRAW)
-    # LibRaw ships a pkg-config file rather than a CMake config.
-    find_package(PkgConfig QUIET)
+    # LibRaw ships a pkg-config file rather than a CMake config, so there is no
+    # find module to fall back on. Windows rarely has pkg-config outside MSYS2;
+    # vcpkg installs a CMake config under the unofficial- name instead.
+    set(_astap_done FALSE)
     if (PkgConfig_FOUND)
-        pkg_check_modules(LIBRAW QUIET IMPORTED_TARGET libraw)
+        if (ASTAP_STATIC_IMAGE_LIBS)
+            pkg_check_modules(LIBRAW QUIET libraw)
+            if (LIBRAW_FOUND)
+                target_include_directories(astap_image PRIVATE ${LIBRAW_INCLUDE_DIRS})
+                # -DLIBRAW_NODLL, without which the headers ask for dllimport
+                # symbols that a static archive does not provide.
+                target_compile_options(astap_image PRIVATE ${LIBRAW_STATIC_CFLAGS_OTHER})
+                target_link_libraries(astap_image PRIVATE ${LIBRAW_STATIC_LDFLAGS})
+                # htonl and friends live in ws2_32 on Windows. LibRaw's .pc file
+                # leaves them out because linking the DLL resolves them on its
+                # own; a static archive does not.
+                if (WIN32)
+                    target_link_libraries(astap_image PRIVATE ws2_32)
+                endif ()
+                set(_astap_done TRUE)
+            endif ()
+        else ()
+            pkg_check_modules(LIBRAW QUIET IMPORTED_TARGET libraw)
+            if (LIBRAW_FOUND)
+                target_link_libraries(astap_image PRIVATE PkgConfig::LIBRAW)
+                set(_astap_done TRUE)
+            endif ()
+        endif ()
     endif ()
-    if (LIBRAW_FOUND)
-        target_compile_definitions(astap_image PRIVATE ASTAP_WITH_LIBRAW)
-        target_link_libraries(astap_image PRIVATE PkgConfig::LIBRAW)
-        list(APPEND ASTAP_IMAGE_FORMATS "raw camera files")
-    else ()
-        # Windows rarely has pkg-config. vcpkg installs LibRaw with a CMake
-        # config under this name instead, so try that before giving up.
+    if (NOT _astap_done)
         find_package(unofficial-libraw CONFIG QUIET)
         if (unofficial-libraw_FOUND)
-            target_compile_definitions(astap_image PRIVATE ASTAP_WITH_LIBRAW)
             target_link_libraries(astap_image PRIVATE unofficial::libraw::raw)
-            list(APPEND ASTAP_IMAGE_FORMATS "raw camera files")
+            set(_astap_done TRUE)
         endif ()
+    endif ()
+    if (_astap_done)
+        target_compile_definitions(astap_image PRIVATE ASTAP_WITH_LIBRAW)
+        list(APPEND ASTAP_IMAGE_FORMATS "raw camera files")
     endif ()
 endif ()
 
@@ -142,27 +212,6 @@ if (WIN32)
     # Windows headers otherwise define min/max as macros, which breaks
     # std::min/std::max at every call site that includes them.
     target_compile_definitions(astap_solver PUBLIC NOMINMAX WIN32_LEAN_AND_MEAN)
-endif ()
-
-# A MinGW build otherwise needs libstdc++, libgcc and libwinpthread next to the
-# .exe or on PATH, and an .exe that will not start unless MSYS2 is on PATH is of
-# no use to the imaging application that launches it. So this is on by default
-# on Windows, where those libraries are not something the system provides
-# anyway; off elsewhere, where a package shares the system copies as it should.
-if (WIN32)
-    set(ASTAP_STATIC_RUNTIME_DEFAULT ON)
-else ()
-    set(ASTAP_STATIC_RUNTIME_DEFAULT OFF)
-endif ()
-option(ASTAP_STATIC_RUNTIME "Link the C++ runtime into the executables (Windows)"
-        ${ASTAP_STATIC_RUNTIME_DEFAULT})
-if (ASTAP_STATIC_RUNTIME AND WIN32)
-    if (MINGW)
-        add_link_options(-static-libgcc -static-libstdc++ -static)
-    elseif (MSVC AND NOT CMAKE_VERSION VERSION_LESS 3.15)
-        cmake_policy(SET CMP0091 NEW)
-        set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
-    endif ()
 endif ()
 
 add_executable(astap_solve src/main.cpp)
