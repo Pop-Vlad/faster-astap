@@ -155,6 +155,15 @@ namespace astap {
   std::string default_index_cache_path(const std::string &db_name, int database_type,
                                        double quad_tolerance);
 
+  // Where one rung is cached, in the same directory and with the density in the
+  // name. Tiers are cached one per file so that ladders compose: a run that
+  // wants a deeper ceiling builds and stores only the rungs it adds, and the
+  // ones it shares with the default ladder are read back rather than rebuilt.
+  // A single file for the whole ladder cannot do that — it belongs to exactly
+  // one ladder, so asking for one more rung discards all the others.
+  std::string index_tier_cache_path(const std::string &db_name, int database_type,
+                                    double quad_tolerance, double density);
+
   // Creates the directory holding `path` when it does not exist.
   bool ensure_parent_directory(const std::string &path);
 } // namespace astap

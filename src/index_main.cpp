@@ -58,10 +58,20 @@ namespace {
   }
 
   // The default depth ladder. One tier reaches about a factor of two in image
-  // star density either side of itself, so a ratio of 2.5 between rungs covers
+  // star density either side of itself, so the 2x steps below overlap and cover
   // 0.2 to 2000 stars/deg^2 continuously. Measured over the corpus, an image
   // whose density falls between two rungs is solved by one of them.
   const std::vector<double> kDefaultLadder = {0.5, 1, 2, 4, 8, 16, 32, 60, 125, 250, 500, 900};
+
+  // Rungs past the default ceiling, for -maxtier. They are not in the default
+  // ladder because they are most of the cache — 900 is 1.2 GB on disk, 1800 adds
+  // 2.5 and 3600 another 4.8 — and because the density matching in
+  // solve_stars_with_tiers reaches the same depths for free down to about 0.25
+  // degrees, which is where the default ladder now stops rather than 0.5. Only
+  // smaller fields need these. A deeper rung than 3600 buys nothing measurable:
+  // the database runs out of stars and the images that still fail are short of
+  // stars, not of depth. See the small fields section of README.md.
+  const std::vector<double> kDeepLadder = {1800, 3600};
 
   std::vector<double> parse_densities(const std::string &v) {
     std::vector<double> out;
@@ -74,13 +84,6 @@ namespace {
       p = c + 1;
     }
     return out;
-  }
-
-  bool same_ladder(const std::vector<double> &a, const std::vector<double> &b) {
-    if (a.size() != b.size()) return false;
-    for (size_t i = 0; i < a.size(); i++)
-      if (std::fabs(a[i] - b[i]) > 1e-9 * std::max(1.0, std::fabs(a[i]))) return false;
-    return true;
   }
 
   void print_usage() {
@@ -111,6 +114,10 @@ namespace {
         "Index options:\n"
         "-i     file {index cache to use, overriding the default location}\n"
         "-tiers d1,d2,.. {depth ladder in stars/deg^2 for a newly built index}\n"
+        "-maxtier d {raise the ceiling of the default ladder to d stars/deg^2,\n"
+        "            which is worth doing below 0.25 degrees and not above:\n"
+        "            3600 takes the 0.15 degree corpus from 3/16 to 10/16 and\n"
+        "            adds rungs of 2.5 and 4.8 GB, built and cached once}\n"
         "-rebuild {rebuild the index even when a usable cache exists}\n"
         "-nocache {build in memory, do not read or write a cache}\n"
         "-cacheinfo {report the cache that would be used, then exit}\n"
@@ -230,8 +237,14 @@ int main(int argc, char **argv) {
   const double min_star_size = has("m") ? std::atof(val("m").c_str()) : 1.5;
   const int forced_bin = has("z") ? std::atoi(val("z").c_str()) : 0;
   const double fov = has("fov") ? std::atof(val("fov").c_str()) : 0;
-  const std::vector<double> ladder =
-      has("tiers") ? parse_densities(val("tiers")) : kDefaultLadder;
+  // -tiers names a ladder outright; -maxtier just raises the ceiling of the
+  // default one, which is the common case: a narrow field needs deeper rungs and
+  // nothing else about the ladder changes.
+  const double maxtier = has("maxtier") ? std::atof(val("maxtier").c_str()) : 0;
+  std::vector<double> ladder = has("tiers") ? parse_densities(val("tiers")) : kDefaultLadder;
+  if (!has("tiers"))
+    for (double d : kDeepLadder)
+      if (d <= maxtier) ladder.push_back(d);
 
   // --- locate the star database ---------------------------------------------
   const std::string dbpath = has("d") ? with_separator(val("d")) : dir_of(argv[0]);
@@ -246,17 +259,32 @@ int main(int argc, char **argv) {
                                                                  tolerance);
   if (has("cacheinfo")) {
     std::cout << "star database: " << (have_db ? db.name() : "(none found in " + dbpath + ")")
-              << "\nindex cache:   " << cache << "\n";
+              << "\nladder wanted:";
+    for (double d : ladder) std::cout << " " << d;
+    std::cout << "\n";
     astap::QuadIndexFile info;
     std::string err;
-    if (astap::read_index_file_header(cache, info, &err)) {
-      std::cout << "               present, " << info.densities.size() << " tiers, tolerance "
-                << info.quad_tolerance << ", " << info.bytes / 1e9 << " GB\n               tiers:";
-      for (double d : info.densities) std::cout << " " << d;
-      std::cout << "\n";
-    } else {
-      std::cout << "               " << err << "\n";
+    double total = 0;
+    for (double d : ladder) {
+      const std::string path = has("i") ? cache
+                                        : astap::index_tier_cache_path(
+                                              have_db ? db.name() : "unknown",
+                                              have_db ? db.database_type() : 0, tolerance, d);
+      if (astap::read_index_file_header(path, info, &err)) {
+        std::cout << "  tier " << d << ": " << info.bytes / 1e9 << " GB  " << path << "\n";
+        total += info.bytes / 1e9;
+      } else {
+        std::cout << "  tier " << d << ": not built\n";
+      }
+      if (has("i")) break;
     }
+    // The pre-split layout, still read when it is there.
+    if (!has("i") && astap::read_index_file_header(cache, info, &err)) {
+      std::cout << "  a ladder file from before the tiers were split is also present ("
+                << info.densities.size() << " tiers, " << info.bytes / 1e9 << " GB): " << cache
+                << "\n";
+    }
+    std::cout << "  total " << total << " GB\n";
     return 0;
   }
 
@@ -266,29 +294,65 @@ int main(int argc, char **argv) {
   }
 
   // --- get an index ----------------------------------------------------------
-  std::vector<astap::QuadIndex> tiers;
+  //
+  // A rung at a time. Each is cached in its own file, so the rungs this run
+  // shares with a previous one are read back and only the new ones are built:
+  // raising the ceiling costs the deep rung, not the whole ladder. -i overrides
+  // that with one file holding everything, which is also the shape older caches
+  // have, so an existing ladder file is still read for the rungs it covers
+  // instead of being thrown away.
+  std::vector<astap::QuadIndex> tiers(ladder.size());
+  std::vector<bool> have(ladder.size(), false);
   auto t0 = Clock::now();
   std::string err;
-  bool loaded = false;
-  if (!nocache && !has("rebuild")) {
+  size_t from_cache = 0;
+
+  auto take_from = [&](const std::string &path, bool quiet) {
     astap::QuadIndexFile info;
-    if (astap::read_index_file_header(cache, info, &err)) {
-      // A cache is only usable when it was built the way this run would build
-      // it. Anything else is rebuilt rather than silently half-used.
-      if (std::fabs(info.quad_tolerance - tolerance) > 1e-12)
-        log("Index cache was built at tolerance " + astap::float_to_str(info.quad_tolerance, 4) +
-            ", rebuilding at " + astap::float_to_str(tolerance, 4) + ".");
-      else if (!same_ladder(info.densities, ladder))
-        log("Index cache holds a different depth ladder, rebuilding.");
-      else if (astap::load_index_file(cache, tiers, 0, 0, &err))
-        loaded = true;
-      else
-        log("Index cache unusable (" + err + "), rebuilding.");
+    if (!astap::read_index_file_header(path, info, &err)) return;
+    if (std::fabs(info.quad_tolerance - tolerance) > 1e-12) {
+      if (!quiet)
+        log("Index cache " + path + " was built at tolerance " +
+            astap::float_to_str(info.quad_tolerance, 4) + ", rebuilding at " +
+            astap::float_to_str(tolerance, 4) + ".");
+      return;
+    }
+    std::vector<astap::QuadIndex> in;
+    if (!astap::load_index_file(path, in, 0, 0, &err)) {
+      if (!quiet) log("Index cache " + path + " unusable (" + err + "), rebuilding it.");
+      return;
+    }
+    for (astap::QuadIndex &ix : in)
+      for (size_t i = 0; i < ladder.size(); i++)
+        if (!have[i] && std::fabs(ix.settings().star_density - ladder[i]) < 1e-9) {
+          tiers[i] = std::move(ix);
+          have[i] = true;
+          from_cache++;
+          break;
+        }
+  };
+
+  if (!nocache && !has("rebuild")) {
+    if (has("i")) {
+      take_from(cache, false);
+    } else {
+      for (size_t i = 0; i < ladder.size(); i++)
+        take_from(astap::index_tier_cache_path(have_db ? db.name() : "unknown",
+                                               have_db ? db.database_type() : 0, tolerance,
+                                               ladder[i]),
+                  true);
+      // Whatever is still missing may be in a ladder file written before the
+      // rungs were split apart.
+      if (from_cache < ladder.size()) take_from(cache, true);
     }
   }
 
-  if (loaded) {
-    log("Index: " + std::to_string(tiers.size()) + " tiers read from " + cache + " in " +
+  std::vector<double> missing;
+  for (size_t i = 0; i < ladder.size(); i++)
+    if (!have[i]) missing.push_back(ladder[i]);
+
+  if (missing.empty()) {
+    log("Index: " + std::to_string(tiers.size()) + " tiers read from cache in " +
         astap::float_to_str(secs(t0, Clock::now()), 2) + " sec.");
   } else {
     if (!have_db) {
@@ -302,21 +366,53 @@ int main(int argc, char **argv) {
     }
     astap::QuadIndexSettings qs;
     qs.quad_tolerance = tolerance;
-    if (progress) log("Building the index ladder from " + db.name() + ", this happens once.");
-    if (!astap::build_tiers(db, qs, ladder, tiers)) {
+    if (progress)
+      log("Building " + std::to_string(missing.size()) + " index tier(s) from " + db.name() +
+          "; each one happens once.");
+    // One pass over the database covers every missing rung: a tile is read once
+    // at the deepest of them and the shallower ones take a prefix.
+    std::vector<astap::QuadIndex> built;
+    if (!astap::build_tiers(db, qs, missing, built)) {
       log("Could not read the star database in " + dbpath);
       return astap::kErrStarDatabaseRead;
     }
-    size_t nq = 0;
-    for (const astap::QuadIndex &ix : tiers) nq += ix.size();
-    log("Index: " + std::to_string(tiers.size()) + " tiers, " + std::to_string(nq) +
-        " quads, built in " + astap::float_to_str(secs(t0, Clock::now()), 2) + " sec.");
-    if (!nocache) {
+    for (astap::QuadIndex &ix : built) {
+      const double d = ix.settings().star_density;
+      if (!nocache && !has("i")) {
+        const std::string path = astap::index_tier_cache_path(db.name(), db.database_type(),
+                                                              tolerance, d);
+        std::vector<astap::QuadIndex> one;
+        one.push_back(ix);
+        if (!astap::ensure_parent_directory(path) || !astap::save_index_file(path, one))
+          log("Warning: could not write the index cache to " + path);
+      }
+      for (size_t i = 0; i < ladder.size(); i++)
+        if (!have[i] && std::fabs(d - ladder[i]) < 1e-9) {
+          tiers[i] = std::move(ix);
+          have[i] = true;
+          break;
+        }
+    }
+    if (!nocache && has("i")) {
       if (astap::ensure_parent_directory(cache) && astap::save_index_file(cache, tiers))
         log("Cached to " + cache);
       else
         log("Warning: could not write the index cache to " + cache);
     }
+    size_t nq = 0;
+    for (const astap::QuadIndex &ix : tiers) nq += ix.size();
+    log("Index: " + std::to_string(tiers.size()) + " tiers (" + std::to_string(from_cache) +
+        " cached, " + std::to_string(missing.size()) + " built), " + std::to_string(nq) +
+        " quads, ready in " + astap::float_to_str(secs(t0, Clock::now()), 2) + " sec.");
+  }
+
+  // A rung that could not be built at all would otherwise sit in the sweep as an
+  // empty index; drop it so the tier count reported is the tier count used.
+  for (size_t i = tiers.size(); i-- > 0;)
+    if (!have[i]) tiers.erase(tiers.begin() + static_cast<long>(i));
+  if (tiers.empty()) {
+    log("No usable index tiers.");
+    return astap::kErrStarDatabaseRead;
   }
 
   // --- solve ------------------------------------------------------------------
@@ -420,6 +516,10 @@ int main(int argc, char **argv) {
         " quads at depth tier " + astap::float_to_str(res.tier_density, 1) + " stars/deg^2 (" +
         std::to_string(res.tiers_tried) + " tiers tried" +
         (res.many_quads_pass ? ", larger quad groups" : "") +
+        (res.stars_used < res.stars_detected
+             ? ", brightest " + std::to_string(res.stars_used) + " of " +
+                   std::to_string(res.stars_detected) + " stars"
+             : "") +
         (res.refined ? ", refined" : "") + (sip.valid ? ", SIP" : "") + ").");
 
     astap::write_ini(change_file_ext(out_base, ".ini"), true, head, cmdline, astap::kErrNone, "");

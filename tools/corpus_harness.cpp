@@ -6,6 +6,16 @@
 // 300x speedup from one that quietly stops solving five percent of images, so no
 // claim about the index solver should be made without this table.
 //
+// The gate applies where the ladder under test can reach. An index tier only
+// matches an image whose detected star density is within about a factor of two
+// of the tier's own, so a ladder covers [sparsest/2, deepest*2] and an image
+// outside that has nothing to match against — the miss is a fact about the
+// ladder, not about the solver. Those images are still solved, timed and
+// printed, they just do not fail the gate; the corpus deliberately contains
+// them, because the small deep fields sit above the default ladder's 900
+// stars/deg^2 ceiling. Widening --density widens the gate with it, so a run with
+// the deeper rungs holds the solver to them.
+//
 // Ground truth comes from each file's own WCS (SkyView writes CRVAL1/2 and
 // CDELT1/2 when it makes the cutout), so a solve is checked against the sky, not
 // against the other solver.
@@ -50,11 +60,20 @@ namespace {
     return sep * 3600 * 180 / kPi;
   }
 
-  // A solve counts only when it lands on the right field. "Right" has to scale
-  // with the image: 60 arcsec is a coarse error on a half degree frame and two
-  // pixels on a ten degree one, so the threshold is the larger of a fixed floor
-  // and two percent of the field.
-  double correct_within_arcsec(double fov_deg) { return std::max(60.0, 0.02 * fov_deg * 3600); }
+  // A solve counts only when it lands on the right field, which has to be
+  // measured as a fraction of the image rather than in arcseconds. Two percent
+  // of the field is about twenty pixels here whatever the field size; the floor
+  // of three pixels only guards a hypothetical tiny image.
+  //
+  // The 60 arcsec floor this used to carry was harmless while the corpus started
+  // at 0.5 degrees and absurd once it reached 0.05: it is a sixth of a 0.1 degree
+  // frame, so a solve landing most of a frame away would have counted. No result
+  // in the corpus was ever within a factor of five of it — every solve is well
+  // inside two percent — so removing it changes no number, it removes a way for
+  // a future wrong answer to pass.
+  double correct_within_arcsec(double fov_deg, double scale_arcsec_px) {
+    return std::max(0.02 * fov_deg * 3600, 3 * scale_arcsec_px);
+  }
 
   // The index solver works on a mono, binned copy, the same one quad_index_bench
   // uses. Binning a small image hard throws away the stars the solve depends on,
@@ -73,7 +92,8 @@ namespace {
     double true_scale = 0;             // arcsec per pixel, original pixels
     double fov_deg = 0;
     size_t nstars = 0;
-    double density = 0;  // detected stars per square degree
+    double density = 0;   // detected stars per square degree
+    bool in_range = true; // density a tier of the ladder under test can reach
     RowList stars;
 
     // Port
@@ -159,9 +179,18 @@ int main(int argc, char **argv) {
     }
   }
   // A geometric ladder. One tier reaches about a factor of two in image density
-  // either side of itself, so a ratio of 2.5 between rungs covers the range
-  // continuously, and the corpus spans 1 to 1300 detected stars/deg^2.
+  // either side of itself, so the 2x steps of the default ladder overlap and
+  // cover the range continuously. This is the ladder astap_index_solve builds by
+  // default, which is the point: the gate has to test what ships. The corpus
+  // reaches past its deep end, to about 6300 stars/deg^2 on the small DSS2
+  // fields.
   if (densities.empty()) densities = {0.5, 1, 2, 4, 8, 16, 32, 60, 125, 250, 500, 900};
+
+  // What this ladder claims, from the factor of two a single tier reaches.
+  const double covered_lo =
+      *std::min_element(densities.begin(), densities.end()) * 0.5;
+  const double covered_hi =
+      *std::max_element(densities.begin(), densities.end()) * 2.0;
 
   std::vector<std::string> files = list_fits(corpus, filter);
   if (limit > 0 && static_cast<int>(files.size()) > limit) files.resize(limit);
@@ -171,7 +200,9 @@ int main(int argc, char **argv) {
   }
   std::printf("%zu images, densities:", files.size());
   for (double d : densities) std::printf(" %.0f", d);
-  std::printf(", %s\n\n", hint ? "hinted" : "blind");
+  std::printf(", %s\n", hint ? "hinted" : "blind");
+  std::printf("the ladder covers %.1f to %.0f detected stars/deg^2; the gate applies there\n\n",
+              covered_lo, covered_hi);
 
   // --- pass 1: image stages and the port -------------------------------------
   std::vector<ImageCase> cases;
@@ -221,6 +252,7 @@ int main(int argc, char **argv) {
     c.density = c.nstars / std::max(1e-9, static_cast<double>(c.fov_deg) * c.fov_deg *
                                               (std::min(c.width, c.height) /
                                                static_cast<double>(std::max(c.width, c.height))));
+    c.in_range = c.density >= covered_lo && c.density <= covered_hi;
     c.stars = stars;
 
     // The port, on the original image.
@@ -245,10 +277,10 @@ int main(int argc, char **argv) {
       c.port_error = arcsec_between(phead.ra0, phead.dec0, c.true_ra, c.true_dec);
       c.port_scale = std::fabs(phead.cdelt2) * 3600;
     }
-    c.port_good = c.port_solved && c.port_error < correct_within_arcsec(c.fov_deg);
+    c.port_good = c.port_solved && c.port_error < correct_within_arcsec(c.fov_deg, c.true_scale);
 
-    std::printf("  %-42s %5.2f deg  %4zu stars (%6.0f/deg^2)  port %s\n", basename_of(f).c_str(),
-                c.fov_deg, c.nstars, c.density,
+    std::printf("  %-42s %5.2f deg  %4zu stars (%6.0f/deg^2)%s  port %s\n", basename_of(f).c_str(),
+                c.fov_deg, c.nstars, c.density, c.in_range ? "" : " past the ladder",
                 c.port_solved ? (c.port_good ? "ok" : "WRONG POSITION") : "no solution");
     cases.push_back(std::move(c));
   }
@@ -297,7 +329,7 @@ int main(int argc, char **argv) {
     c.idx_secs = secs(s0, Clock::now());
     c.idx_error = r.solved ? arcsec_between(r.ra0, r.dec0, c.true_ra, c.true_dec) : 0;
     // A solve that lands somewhere else is a failure, not a solve.
-    c.idx_solved = r.solved && c.idx_error < correct_within_arcsec(c.fov_deg);
+    c.idx_solved = r.solved && c.idx_error < correct_within_arcsec(c.fov_deg, c.true_scale);
     c.idx_inliers = r.nr_inliers;
     c.idx_tier = r.tier_density;
     c.idx_tiers_tried = r.tiers_tried;
@@ -310,7 +342,7 @@ int main(int argc, char **argv) {
               "port (err, time)", "index (ladder sweep)");
   std::printf("%s\n", std::string(120, '-').c_str());
 
-  int port_ok = 0, idx_ok = 0, gate_fail = 0;
+  int port_ok = 0, idx_ok = 0, gate_fail = 0, past_ladder = 0, past_ladder_miss = 0;
   double port_time = 0, idx_time = 0;
   for (const ImageCase &c : cases) {
     std::printf("%-42s %6.2f %6zu %7.0f | ", basename_of(c.file).c_str(), c.fov_deg, c.nstars,
@@ -331,8 +363,11 @@ int main(int argc, char **argv) {
     } else {
       std::printf(" %-30s", c.idx_reason.c_str());
     }
-    std::printf("%s\n", c.port_good && !c.idx_solved ? "   <== MISSED" : "");
-    if (c.port_good && !c.idx_solved) gate_fail++;
+    const bool missed = c.port_good && !c.idx_solved;
+    std::printf("%s\n", missed ? (c.in_range ? "   <== MISSED" : "   (past the ladder)") : "");
+    if (!c.in_range) past_ladder++;
+    if (missed && c.in_range) gate_fail++;
+    if (missed && !c.in_range) past_ladder_miss++;
   }
 
   std::printf("\nport  solved %d/%zu\n", port_ok, cases.size());
@@ -341,17 +376,25 @@ int main(int argc, char **argv) {
     std::printf("on the %d images the port solves: index takes %.2f s against the port's %.2f s "
                 "(%.0fx)\n",
                 port_ok, idx_time, port_time, port_time / std::max(1e-9, idx_time));
-  std::printf("\nGATE: images the port solves that the index misses: %d\n", gate_fail);
+  if (past_ladder > 0)
+    std::printf("\n%d images fall outside the %.1f to %.0f stars/deg^2 this ladder reaches; the "
+                "port solves %d of those that the index does not.\nThat is outside what the "
+                "ladder claims, so they are reported and not gated. Add rungs with --density to "
+                "bring them in.\n",
+                past_ladder, covered_lo, covered_hi, past_ladder_miss);
+  std::printf("\nGATE: images within the ladder's range that the port solves and the index "
+              "misses: %d\n",
+              gate_fail);
   if (gate_fail == 0 && port_ok > 0) std::printf("PASS\n");
 
   if (!csv.empty()) {
     std::ofstream f(csv);
-    f << "image,fov_deg,stars,density,port_solved,port_error_arcsec,port_secs,"
+    f << "image,fov_deg,stars,density,in_ladder_range,port_solved,port_error_arcsec,port_secs,"
          "idx_solved,idx_error_arcsec,idx_secs,idx_tier,idx_inliers,idx_tiers_tried,"
          "idx_many_quads,idx_refined,idx_refine_quads,idx_reason\n";
     for (const ImageCase &c : cases)
       f << basename_of(c.file) << "," << c.fov_deg << "," << c.nstars << "," << c.density << ","
-        << c.port_good << "," << c.port_error << "," << c.port_secs << ","
+        << c.in_range << "," << c.port_good << "," << c.port_error << "," << c.port_secs << ","
         << c.idx_solved << "," << c.idx_error << "," << c.idx_secs << "," << c.idx_tier << ","
         << c.idx_inliers << "," << c.idx_tiers_tried << "," << c.idx_many << ","
         << c.idx_refined << "," << c.idx_refine_quads << ",\"" << c.idx_reason << "\"\n";

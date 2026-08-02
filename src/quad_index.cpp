@@ -467,6 +467,17 @@ namespace astap {
     return (dir / name).string();
   }
 
+  std::string index_tier_cache_path(const std::string &db_name, int database_type,
+                                    double quad_tolerance, double density) {
+    // Same directory and the same naming rules, with the rung appended. %g keeps
+    // the sparse rungs readable (d0.5) and the deep ones exact (d3600).
+    std::string path = default_index_cache_path(db_name, database_type, quad_tolerance);
+    path.erase(path.size() - 4); // ".qix"
+    char suffix[48];
+    std::snprintf(suffix, sizeof(suffix), "_d%g.qix", density);
+    return path + suffix;
+  }
+
   bool ensure_parent_directory(const std::string &path) {
     const std::filesystem::path dir = std::filesystem::path(path).parent_path();
     if (dir.empty()) return true;

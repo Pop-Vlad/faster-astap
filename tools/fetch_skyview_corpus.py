@@ -8,8 +8,15 @@ capability gate rather than a self-consistency check.
 The grid is chosen to exercise the things that actually break a plate solver,
 per the index solver sections of README.md:
 
-  * field of view from 0.25 to 10 degrees, crossing the auto-FOV range
+  * field of view from 0.05 to 10 degrees, crossing the auto-FOV range
     (0.38 to 9.5) and the database-type switch at 6 degrees;
+  * survey depth, fetched as two separate images of the same field below one
+    degree: a shallow one (2MASS, a few hundred stars/deg^2) and a deep one
+    (DSS2 Red, thousands). Depth is not a detail of the cutout, it is the axis
+    the index solver lives on — the tier that solves an image has to match its
+    detected density, and a cutout at fixed pixel count gets *deeper* as the
+    field shrinks (the same field gives 748 stars/deg^2 at 0.5 degrees and 2700
+    at 0.1), which is what puts small fields above the default tier ladder;
   * galactic latitude from the plane to the pole, which is the practical knob
     for detected star density — the axis that broke the quad index when the
     index tier and the image density diverged by more than about 2x;
@@ -59,25 +66,33 @@ FIELDS = [
     ("orion",           83.82,  -5.39, True,  "strong nebulosity"),
 ]
 
-# Survey depth has to track field size, or the image ends up far deeper than
-# any catalogue the solver can match it against. A 0.5 degree DSS2 cutout yields
-# about 2000 detected stars/deg^2 where a typical amateur frame gives ~165, and
-# that mismatch alone is enough to make an otherwise easy field unsolvable.
-# 2MASS is shallower and suits the small fields; DSS2 suits the wide ones.
-SURVEY_FOR_FOV = [
-    (1.0, "2MASS-J", "2massj"),   # fields below 1 degree
-    (99.0, "DSS2 Red", "dss2r"),  # 1 degree and above
+# Which surveys to fetch at a given field size. Below one degree both are taken,
+# because depth is an independent axis there and the two answer different
+# questions: 2MASS stands in for a short exposure (400-4000 stars/deg^2 over this
+# grid) and DSS2 Red for a deep one (1500-6300). The same field at the same size
+# can solve in one and not the other, so a single survey would report a solve
+# rate that is really a statement about the cutout.
+#
+# Above one degree only DSS2 is fetched: 2MASS at 2 degrees and beyond is too
+# sparse to be a fair wide-field test, and the wide end is not where depth binds.
+# Below 0.1 degrees only 2MASS, since at 0.05 degrees every field is down to
+# 3-10 detected stars and neither solver gets near it — those images are kept as
+# the negative control that fixes where the floor is, and one survey shows that.
+SURVEYS_FOR_FOV = [
+    (0.1, ["2MASS-J"]),               # below 0.1 degrees
+    (1.0, ["2MASS-J", "DSS2 Red"]),   # 0.1 to 1 degree: both depths
+    (99.0, ["DSS2 Red"]),             # 1 degree and above
 ]
 SURVEY_TAGS = {"2MASS-J": "2massj", "DSS2 Red": "dss2r", "DSS1 Red": "dss1r"}
 
-DEFAULT_FOVS = [0.5, 1.0, 2.0, 5.0, 10.0]
+DEFAULT_FOVS = [0.05, 0.1, 0.15, 0.25, 0.35, 0.5, 1.0, 2.0, 5.0, 10.0]
 
 
-def survey_for(fov):
-    for limit, name, _tag in SURVEY_FOR_FOV:
+def surveys_for(fov):
+    for limit, names in SURVEYS_FOR_FOV:
         if fov < limit:
-            return name
-    return SURVEY_FOR_FOV[-1][1]
+            return names
+    return SURVEYS_FOR_FOV[-1][1]
 
 
 def build_url(survey, ra, dec, fov, pixels):
@@ -143,7 +158,7 @@ def main():
         if hard and not args.include_hard and args.fields is None:
             continue
         for fov in args.fov:
-            for survey in (args.surveys if args.surveys else [survey_for(fov)]):
+            for survey in (args.surveys if args.surveys else surveys_for(fov)):
                 tag = SURVEY_TAGS.get(survey, survey.replace(" ", "").lower())
                 fname = f"{name}_{tag}_{fov:g}deg.fits"
                 jobs.append({

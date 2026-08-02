@@ -10,6 +10,7 @@
 #include "astap/calc_trans_cubic.h"
 #include "astap/matching.h"
 #include "astap/quads.h"
+#include "astap/star_detection.h"
 
 namespace astap {
   namespace {
@@ -468,14 +469,23 @@ namespace astap {
   IndexSolveResult solve_stars_with_tiers(const std::vector<QuadIndex> &tiers, const RowList &stars,
                                           int width, int height, const IndexSolveSettings &s,
                                           double density_hint) {
-    auto attempt = [&](bool many, IndexSolveResult &r) {
-      RowList work = stars;  // find_quads sorts its input in place
+    auto attempt = [&](const RowList &use, bool many, IndexSolveResult &r) {
+      RowList work = use;  // find_quads sorts its input in place
       RowList quads;
       if (many)
         find_many_quads(work, quads, 6);
       else
         find_quads(static_cast<int>(work.count()), work, quads);
-      r = solve_with_tiers(tiers, quads, width, height, s, density_hint);
+      // Thinning the image scales its density, so the hint has to scale with it,
+      // or the sweep is ordered for a depth the image no longer has.
+      const double scaled_hint =
+          density_hint > 0 && stars.count() > 0
+              ? density_hint * static_cast<double>(use.count()) / static_cast<double>(stars.count())
+              : density_hint;
+      r = solve_with_tiers(tiers, quads, width, height, s, scaled_hint);
+      r.stars_used = use.count();
+      r.stars_detected = stars.count();
+      r.many_quads_pass = many;
       return r.solved;
     };
 
@@ -483,7 +493,7 @@ namespace astap {
 
     // Pass 1: one quad per star, from its three nearest neighbours. The ordinary
     // path, and it solves most images.
-    if (attempt(false, r)) return r;
+    if (attempt(stars, false, r)) return r;
 
     // Pass 2: every quad from each star's six nearest neighbours, fifteen per
     // star instead of one. This is what sparse and wide fields need.
@@ -496,12 +506,38 @@ namespace astap {
     // takes the true pairs on such a field from 3 to 15. C(6,4) contains the
     // three-nearest quad, so this is a strict superset and can only add matches.
     // It is a second pass purely because it costs fifteen times the queries.
-    if (attempt(true, r)) {
-      r.many_quads_pass = true;
-      return r;
+    if (attempt(stars, true, r)) return r;
+
+    // Pass 3 onwards: the same two passes against the brightest half of the
+    // stars, then the brightest quarter. An image deeper than the deepest tier
+    // has no rung to match against, and thinning it reaches one without holding
+    // a deeper index — see density_match_levels for why that is the same knob.
+    // Every level costs another sweep, so it sits behind the two full-list
+    // passes and an image that already solved never reaches it.
+    RowList thinned = stars;
+    for (int level = 0; level < s.density_match_levels; level++) {
+      const size_t want = thinned.count() / 2;
+      if (static_cast<int>(want) < s.density_match_min_stars) break;
+
+      // Brightness is not the list order, so the cut goes through the same SNR
+      // selection find_stars uses for -s. Column 2 holds the SNR.
+      double highest_snr = 0;
+      for (size_t i = 0; i < thinned.count(); i++)
+        highest_snr = std::max(highest_snr, thinned(2, i));
+      const size_t before = thinned.count();
+      get_brightest_stars(static_cast<int>(want), highest_snr, thinned);
+      if (thinned.count() >= before) break;  // the cut did not bite
+
+      if (attempt(thinned, false, r)) return r;
+      if (attempt(thinned, true, r)) return r;
     }
 
+    // Report the failure against the image as it was detected, not against
+    // whichever thinned attempt happened to run last.
     r.solved = false;
+    r.many_quads_pass = false;
+    r.stars_used = stars.count();
+    r.stars_detected = stars.count();
     r.reason = "no depth tier solved this image";
     return r;
   }

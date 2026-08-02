@@ -47,6 +47,22 @@ namespace astap {
     // Minimal samples drawn per candidate. Small clusters are enumerated
     // exhaustively and never reach this.
     int max_samples = 3000;
+
+    // --- density matching ----------------------------------------------------
+    // Only the ratio between the image's star density and the tier's decides
+    // whether a quad can match, and the image side is the free one: keeping the
+    // brightest half of the stars halves the image's density, which reaches the
+    // same tier a rung twice as deep would. So an image deeper than the ladder
+    // is retried against fewer of its own stars instead of against an index
+    // nobody wants to store — over the corpus this is worth as much at 0.25
+    // degrees as doubling the ladder twice, at no cost in cache.
+    //
+    // Each level halves the star list, so `levels` of 2 covers a factor of four
+    // in depth. It stops early once too few stars are left to build quads that
+    // can carry a consensus, which is what limits the trick to about 0.2
+    // degrees rather than the ladder.
+    int density_match_levels = 2;
+    int density_match_min_stars = 60;
   };
 
   struct IndexSolveResult {
@@ -68,6 +84,10 @@ namespace astap {
     int tiers_tried = 0;
     // Set when the solution needed the larger quad groups of the second pass.
     bool many_quads_pass = false;
+    // Stars the solve actually used, and how many were detected. They differ
+    // when density matching had to thin the list to reach a tier.
+    size_t stars_used = 0;
+    size_t stars_detected = 0;
     // The tolerance the matching index was built with, carried so a later stage
     // can match on the same terms.
     double quad_tolerance_used = 0.007;
