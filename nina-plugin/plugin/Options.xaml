@@ -38,7 +38,11 @@
                        TextWrapping="Wrap" />
             <TextBlock Margin="20,2,0,0"
                        Opacity="0.7"
-                       Text="N.I.N.A. has no way to list a plugin as a plate solver, so it still says ASTAP in the dropdown. Unticking this restores the previous path."
+                       Text="The path changes over by itself once the index is in memory, and not before — until then plate solving stays with ASTAP, so a solve never lands on a solver that is still warming up. Unticking restores the previous path."
+                       TextWrapping="Wrap" />
+            <TextBlock Margin="20,2,0,0"
+                       Opacity="0.7"
+                       Text="N.I.N.A. has no way to list a plugin as a plate solver, so the dropdown still says ASTAP."
                        TextWrapping="Wrap" />
 
             <TextBlock Margin="0,16,0,0" FontWeight="Bold" Text="Star database" />
@@ -91,8 +95,38 @@
                            VerticalAlignment="Center" />
             </StackPanel>
             <CheckBox Margin="0,6,0,0"
+                      Content="Read the index into memory when N.I.N.A. starts"
+                      IsChecked="{Binding StartWithNina}" />
+            <TextBlock Margin="20,2,0,0"
+                       Opacity="0.7"
+                       Text="Warming up during startup costs nothing; warming up on the first solve of the night makes something wait."
+                       TextWrapping="Wrap" />
+            <CheckBox Margin="0,6,0,0"
                       Content="Stop the server when N.I.N.A. closes"
                       IsChecked="{Binding StopServerOnExit}" />
+            <TextBlock Margin="20,2,0,0"
+                       Opacity="0.7"
+                       Text="The server also exits by itself if N.I.N.A. goes away without asking it to — a crash releases the memory just the same."
+                       TextWrapping="Wrap" />
+
+            <TextBlock Margin="0,16,0,0" FontWeight="Bold" Text="Removing it" />
+            <TextBlock Margin="0,4,0,0" Text="{Binding CacheSummary}" TextWrapping="Wrap" />
+            <CheckBox Margin="0,6,0,0"
+                      Content="Delete the index cache when the plugin is uninstalled"
+                      IsChecked="{Binding RemoveCacheOnUninstall}" />
+            <TextBlock Margin="20,2,0,0"
+                       Opacity="0.7"
+                       Text="The cache belongs to the star database rather than to this plugin, so a command line astap_index_solve on this machine shares it. Deleting costs no data — it is rebuilt on next use — but that rebuild takes minutes."
+                       TextWrapping="Wrap" />
+            <TextBlock Margin="0,6,0,0"
+                       Opacity="0.7"
+                       Text="Uninstalling restores the previous ASTAP path by itself. The button below does the same without waiting, for a machine you want cleared now."
+                       TextWrapping="Wrap" />
+            <Button Width="260"
+                    Margin="0,6,0,0"
+                    HorizontalAlignment="Left"
+                    Command="{Binding CleanUpCommand}"
+                    Content="Restore ASTAP and remove everything" />
 
         </StackPanel>
     </DataTemplate>

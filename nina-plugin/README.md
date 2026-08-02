@@ -114,36 +114,108 @@ Four files: `FasterAstap.dll`, its `.pdb` and `.deps.json`, and
 `astap_index_server.exe`. They belong together in one folder, because the plugin
 points N.I.N.A. at the executable sitting beside it.
 
-The reliable route is N.I.N.A.'s own installer: **Plugins ▸ install from
-archive**, pointed at `dist/FasterAstap.zip`. That puts the folder wherever the
-running version expects it, which since 3.0 is a version subfolder under
-`%localappdata%\NINA\Plugins\` whose name follows the application version.
-Copying the four files there by hand works too, if you would rather pick the
-folder yourself.
+Either use N.I.N.A.'s own installer — **Plugins ▸ install from archive**, pointed
+at `dist/FasterAstap.zip` — or copy the folder to
+
+    %localappdata%\NINA\Plugins\3.0.0\FasterAstap\
+
+`3.0.0` is not the application version. It is the plugin generation, and it stays
+`3.0.0` across all of N.I.N.A. 3.x. Anything placed directly in `Plugins\` is
+treated as a leftover from before that folder existed and is migrated *into*
+`3.0.0` on the next start, so a folder named for the application version ends up
+one level too deep and is never seen.
 
 Nothing is written to `Program Files` and no administrator rights are involved.
+N.I.N.A. holds the assembly open while it runs, so it has to be closed before a
+rebuilt plugin can be copied over.
+
+The star database is not copied there. It is gigabytes, and there is usually
+already one beside the existing ASTAP installation, which is where the plugin
+looks first.
 
 ## Using it
 
-Options ▸ Plugins ▸ Faster ASTAP:
+Nothing, if the defaults suit. On the first start the plugin writes its settings,
+reads the index into memory, and then points `ASTAPLocation` at its own solver.
 
-1. Check the **database directory**. It is filled in from the ASTAP installation
-   N.I.N.A. is already configured for, and only needs changing if the `.1476` or
-   `.290` files live somewhere else.
-2. Press **Start server**. The first run on a machine that has never built the
-   index will take a while and then cache it; later runs read it back in
-   seconds.
-3. Tick **Use for plate solving**. That is the moment `ASTAPLocation` changes.
-   Unticking it, or removing the plugin, puts the old path back.
+The order there is the whole design. The path is taken over **after** the index
+is resident, never before: warming up takes seconds when the ladder is cached and
+minutes the first time it has to be built, and a plate solve arriving in that
+window would otherwise reach a solver that cannot answer yet. Until then plate
+solving stays with whatever was configured, and the options page says so.
 
-The solver dropdown will still say ASTAP — N.I.N.A. has no way to list a plugin
-there. The options page reports what is actually serving.
+Warming up during N.I.N.A.'s own startup is the point: it costs nothing there,
+where paying the same seconds on the first solve of the night makes something
+wait. That is what *read the index into memory when N.I.N.A. starts* does, and it
+is separate from taking the ASTAP path over — a resident index is useful even
+when something else is doing the solving, since any client finds a running
+server whoever launched it.
 
-## Installing
+Options ▸ Plugins ▸ Faster ASTAP shows what is resident, what recent solves cost,
+and which path is in force. Worth checking there:
 
-Plugins live under `%localappdata%\NINA\Plugins\<version>\<name>\`, which is a
-per-user directory: no administrator rights are involved, nothing is written to
-`Program Files`, and removing the plugin removes the solver with it. The star
-database is *not* copied there — it is gigabytes, and there is usually already
-one next to the existing ASTAP installation, which is where the plugin looks
-first.
+- the **database directory**, filled in from the ASTAP installation N.I.N.A. was
+  already configured for, and only wrong if the `.1476` or `.290` files live
+  somewhere else;
+- **depth tiers**, if the full ladder is more memory than you want to spend.
+
+Unticking **Use for plate solving**, or removing the plugin, puts the old path
+back. The solver dropdown will still say ASTAP — N.I.N.A. has no way to list a
+plugin there.
+
+## Shutting down, and shutting down badly
+
+The server is a second process holding gigabytes, so it must never outlive the
+application it was started for. Two mechanisms, because one of them is not
+enough:
+
+- N.I.N.A. closing normally runs the plugin's teardown, which asks the server to
+  stop. It finishes the solve it is on, releases the index, and exits.
+- N.I.N.A. crashing, or being killed, never reaches that. So the server is also
+  given N.I.N.A.'s process id with `-parent` and watches it: when that process
+  ends, by whatever means, the server logs it and exits. Verified by killing the
+  parent outright — the memory comes back within a second or two.
+
+`-idle-exit` is a third line, off by default: a server that has been asked to
+solve nothing for N minutes stops on its own. It exists for a machine where
+something started a server outside of N.I.N.A. entirely.
+
+## Removing it
+
+N.I.N.A. offers a plugin no way to know it is being uninstalled. It moves the
+plugin folder aside and deletes it on the next start, so by the time the removal
+is complete there is nothing of this plugin left running to tidy up after itself.
+Two things follow, and they are worth separating because one is guaranteed and
+the other is not.
+
+**The ASTAP path is always restored.** Not on uninstall — on *every* exit, before
+anything is checked or decided. The path points here only while the plugin is
+loaded and the index is resident, and it is re-adopted on the next start. So a
+plugin folder that disappears between one run and the next cannot leave
+`ASTAPLocation` standing against a missing executable, however it disappeared.
+This is the failure that would actually cost you a night, and it does not depend
+on detecting anything.
+
+**The index cache is removed on a best-effort basis.** The cache is the one thing
+that outlives the plugin folder: several gigabytes under
+`%localappdata%\faster-astap\cache`, put there deliberately so that it survives
+plugin updates. Deleting it needs the plugin to know it is being uninstalled, and
+what it actually knows is narrower — at teardown it looks for
+`astap_index_server.exe` beside its own assembly, and takes its absence to mean
+the folder has already been moved to `PluginDeletion` while the session ran. That
+holds when you uninstall from a running N.I.N.A. and then close it. It does not
+hold if you delete the plugin folder while N.I.N.A. is closed, because then none
+of this code ever runs again. In that case the cache is simply left where it is.
+
+Leaving a cache behind costs disk space and nothing else, so best effort is an
+acceptable answer here in a way it would not be for the solver path.
+
+**Restore ASTAP and remove everything** on the options page is the reliable route:
+it restores the path, stops the server, and deletes the cache and the generated
+files there and then, with no inference involved. It cannot delete the plugin
+itself — N.I.N.A. does that afterwards.
+
+Before leaving *delete the index cache when the plugin is uninstalled* ticked,
+note that the cache is keyed to the star database and the quad tolerance, not to
+this plugin: a command line `astap_index_solve` on the same machine is sharing
+those very files. Deleting costs no data, only the minutes to rebuild.

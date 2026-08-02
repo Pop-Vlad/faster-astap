@@ -115,9 +115,14 @@ namespace FasterAstap {
             if (await IsRunningAsync(token).ConfigureAwait(false)) return true;
             if (!File.Exists(ExecutablePath)) return false;
 
+            // -parent ties the server's life to this process. Being asked to stop
+            // covers N.I.N.A. closing properly; this covers it crashing, being
+            // killed, or going away in any other manner that never reaches
+            // Teardown. Without it a crash strands gigabytes until the next reboot.
             var info = new ProcessStartInfo {
                 FileName = ExecutablePath,
-                Arguments = "-serve -quiet -config \"" + ConfigPath + "\"",
+                Arguments = "-serve -quiet -config \"" + ConfigPath + "\" -parent " +
+                            Environment.ProcessId.ToString(CultureInfo.InvariantCulture),
                 UseShellExecute = false,
                 CreateNoWindow = true,
                 WorkingDirectory = Path.GetDirectoryName(ExecutablePath) ?? "."
@@ -233,6 +238,86 @@ namespace FasterAstap {
                 return Enumerable.Empty<Process>();
             }
             return all;
+        }
+
+        // --- what this leaves on the disk ---------------------------------------
+        //
+        // Three things outlive the plugin folder: the index cache, and the settings
+        // and log written beside the executable. The last two go when the folder
+        // does. The cache does not — it is gigabytes, it lives under LocalAppData
+        // so that it survives plugin updates, and nothing else will ever tidy it up.
+
+        /// <summary>
+        /// Where the solver caches index rungs when it has not been told otherwise.
+        /// Matches default_index_cache_path in the C++ side.
+        /// </summary>
+        public static string DefaultCacheDirectory {
+            get {
+                var local = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
+                return Path.Combine(local, "faster-astap", "cache");
+            }
+        }
+
+        public static long DirectorySize(string directory) {
+            try {
+                if (File.Exists(directory)) return new FileInfo(directory).Length;
+                if (!Directory.Exists(directory)) return 0;
+                long total = 0;
+                foreach (var file in Directory.EnumerateFiles(directory, "*", SearchOption.AllDirectories)) {
+                    try {
+                        total += new FileInfo(file).Length;
+                    } catch (Exception) {
+                        // A file that vanished between listing and measuring is not
+                        // worth failing a size report over.
+                    }
+                }
+                return total;
+            } catch (Exception) {
+                return 0;
+            }
+        }
+
+        /// <summary>
+        /// Deletes the index cache. It is rebuilt on next use, so the cost of being
+        /// wrong here is time rather than data.
+        /// </summary>
+        public static bool DeleteCache(string directory, out string error) {
+            error = "";
+            try {
+                // A server told to keep the whole ladder in one named file reports
+                // that file rather than a directory, and deleting it is still the
+                // right thing to do.
+                if (File.Exists(directory)) {
+                    File.Delete(directory);
+                    return true;
+                }
+                if (!Directory.Exists(directory)) return true;
+                Directory.Delete(directory, true);
+                // Take the parent too when this emptied it, so nothing is left
+                // behind but no unrelated neighbour is removed.
+                var parent = Path.GetDirectoryName(directory);
+                if (parent != null && Directory.Exists(parent) &&
+                    !Directory.EnumerateFileSystemEntries(parent).Any())
+                    Directory.Delete(parent);
+                return true;
+            } catch (Exception e) {
+                error = e.Message;
+                return false;
+            }
+        }
+
+        /// <summary>
+        /// The settings file and log this plugin writes beside its executable.
+        /// </summary>
+        public void DeleteGeneratedFiles() {
+            foreach (var path in new[] { ConfigPath, LogPath }) {
+                try {
+                    if (File.Exists(path)) File.Delete(path);
+                } catch (Exception) {
+                    // Being unable to remove a log is not worth reporting on the way
+                    // out; the folder holding it is about to go anyway.
+                }
+            }
         }
     }
 }

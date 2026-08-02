@@ -49,6 +49,8 @@
 #ifdef _WIN32
 #include <windows.h>
 #else
+#include <cerrno>
+#include <csignal>
 #include <spawn.h>
 #include <sys/wait.h>
 #include <unistd.h>
@@ -399,7 +401,71 @@ namespace {
     std::atomic<bool> shutdown_requested_{false};
   };
 
-  int run_server(const Config &config, const std::string &endpoint, bool quiet) {
+  // --- outliving nobody ------------------------------------------------------
+  //
+  // This process holds gigabytes and has no window, so the one thing it must
+  // never do is survive the application it was started for. Being asked to stop
+  // covers the ordinary exit; it does not cover a crash, a kill, or a machine
+  // where the application went away without running its shutdown. So the server
+  // also watches the process that started it, and goes when that goes.
+
+  // True only when the process was seen to end. "Could not watch it" has to be
+  // told apart from "it ended", or a server that is merely unable to open a
+  // handle shuts itself down while the application it belongs to is running
+  // perfectly well — the failure would look exactly like the thing it is
+  // guarding against.
+#ifdef _WIN32
+  bool wait_for_process_exit(unsigned long pid, const std::atomic<bool> &give_up,
+                             std::string *error) {
+    HANDLE h = OpenProcess(SYNCHRONIZE, FALSE, static_cast<DWORD>(pid));
+    if (!h) {
+      const DWORD e = GetLastError();
+      // Gone already is a real answer; anything else means this watch cannot be
+      // kept, and the server carries on unwatched rather than quitting.
+      if (e == ERROR_INVALID_PARAMETER) return true;
+      if (error) *error = "OpenProcess error " + std::to_string(e);
+      return false;
+    }
+    bool exited = false;
+    while (!give_up) {
+      if (WaitForSingleObject(h, 1000) == WAIT_OBJECT_0) {
+        exited = true;
+        break;
+      }
+    }
+    CloseHandle(h);
+    return exited;
+  }
+#else
+  bool wait_for_process_exit(unsigned long pid, const std::atomic<bool> &give_up,
+                             std::string *error) {
+    while (!give_up) {
+      if (kill(static_cast<pid_t>(pid), 0) != 0) {
+        if (errno == ESRCH) return true;
+        if (error) *error = std::strerror(errno);
+        return false;
+      }
+      std::this_thread::sleep_for(std::chrono::seconds(1));
+    }
+    return false;
+  }
+#endif
+
+  // Ctrl+C and a closing console window, for a server started by hand. Without
+  // this the process is torn down where it stands, which loses nothing on
+  // Windows but does leave the socket file behind on the platforms that have
+  // one.
+  astap::ipc::Server *g_server_for_signal = nullptr;
+
+#ifdef _WIN32
+  BOOL WINAPI console_handler(DWORD) {
+    if (g_server_for_signal) g_server_for_signal->stop();
+    return TRUE;
+  }
+#endif
+
+  int run_server(const Config &config, const std::string &endpoint, bool quiet,
+                 unsigned long parent_pid) {
     std::ofstream logstream;
     if (!config.logfile.empty()) logstream.open(config.logfile, std::ios::app);
     auto log = [&](const std::string &s) {
@@ -437,7 +503,30 @@ namespace {
       return 1;
     }
     app.set_server(&server);
+    g_server_for_signal = &server;
+#ifdef _WIN32
+    SetConsoleCtrlHandler(console_handler, TRUE);
+#endif
     log("Listening on " + endpoint + ". Solve with: " + executable_path() + " -f <image>");
+
+    // Tied to the process that asked for this one. It ends when that ends, by
+    // whatever means it ended.
+    std::atomic<bool> stop_watching{false};
+    std::thread parent_watch;
+    if (parent_pid) {
+      parent_watch = std::thread([&] {
+        std::string why;
+        const bool exited = wait_for_process_exit(parent_pid, stop_watching, &why);
+        if (exited && !stop_watching) {
+          log("The process that started this one (" + std::to_string(parent_pid) +
+              ") has gone, exiting.");
+          server.stop();
+        } else if (!exited && !stop_watching && !why.empty()) {
+          log("Cannot watch process " + std::to_string(parent_pid) + " (" + why +
+              "), carrying on without it.");
+        }
+      });
+    }
 
     // A server nobody remembers holds gigabytes for nothing. Off by default,
     // because the usual owner of this process is a plugin that stops it itself.
@@ -458,8 +547,13 @@ namespace {
     }
 
     server.run();
+    stop_watching = true;
     if (idle_watch.joinable()) idle_watch.join();
-    log("Server stopped.");
+    // The watcher is parked on the parent's handle for up to a second at a time,
+    // so it costs at most that to come back and see that it is finished.
+    if (parent_watch.joinable()) parent_watch.join();
+    g_server_for_signal = nullptr;
+    log("Server stopped, memory released.");
     return 0;
   }
 
@@ -481,6 +575,7 @@ namespace {
         "-status {report what a running server is holding}\n"
         "-config file {settings file, default faster-astap.ini next to this program}\n"
         "-endpoint name {named pipe or socket to use, for more than one server}\n"
+        "-parent pid {exit when this process does, however it goes}\n"
         "-quiet {do not write progress to the console}\n"
         "\n"
         "Solving (the options an imaging application passes to ASTAP):\n"
@@ -546,7 +641,7 @@ int main(int argc, char **argv) {
   // position, so nothing reads them.
   auto takes_value = [&](const std::string &k) {
     return in_list(k, {"f", "d", "D", "fov", "s", "t", "m", "z", "o", "i", "tiers", "maxtier",
-                       "threads", "config", "endpoint", "idle-exit", "r", "ra", "spd"});
+                       "threads", "config", "endpoint", "idle-exit", "parent", "r", "ra", "spd"});
   };
   auto is_flag = [&](const std::string &k) {
     return in_list(k, {"serve", "stop", "status", "quiet", "wcs", "sip", "norefine", "log",
@@ -609,7 +704,9 @@ int main(int argc, char **argv) {
                                : !config.endpoint.empty() ? config.endpoint
                                                           : astap::ipc::default_endpoint();
 
-  if (has("serve")) return run_server(config, endpoint, has("quiet"));
+  if (has("serve"))
+    return run_server(config, endpoint, has("quiet"),
+                      has("parent") ? std::strtoul(val("parent").c_str(), nullptr, 10) : 0);
 
   // --- the small requests ----------------------------------------------------
   if (has("stop") || has("status")) {

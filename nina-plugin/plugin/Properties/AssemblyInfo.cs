@@ -18,8 +18,11 @@ using System.Runtime.InteropServices;
 [assembly: AssemblyProduct("Faster ASTAP")]
 [assembly: AssemblyCopyright("Copyright © 2026 Vlad Pop. Original ASTAP algorithm © 2018-2026 Han Kleijn.")]
 
-// N.I.N.A. 3.0 is where the plugin interfaces this uses settled.
-[assembly: AssemblyMetadata("MinimumApplicationVersion", "3.0.0.2017")]
+// The guideline is to state the version of the NINA.Plugin package this was
+// built against, and claiming less than that is not a favour to anyone: it lets
+// an older N.I.N.A. load a plugin compiled against interfaces it does not have,
+// which fails at the point of use rather than at the point of loading.
+[assembly: AssemblyMetadata("MinimumApplicationVersion", "3.2.0.9001")]
 
 [assembly: AssemblyMetadata("License", "MPL-2.0")]
 [assembly: AssemblyMetadata("LicenseURL", "https://www.mozilla.org/en-US/MPL/2.0/")]

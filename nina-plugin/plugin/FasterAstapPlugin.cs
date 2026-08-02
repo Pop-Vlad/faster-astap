@@ -54,6 +54,7 @@ namespace FasterAstap {
             RefreshCommand = new DelegateCommand(() => Forget(RefreshStatusAsync()));
             StartServerCommand = new DelegateCommand(() => Forget(StartServerAsync()));
             StopServerCommand = new DelegateCommand(() => Forget(StopServerAsync()));
+            CleanUpCommand = new DelegateCommand(() => Forget(CleanUpAsync()));
 
             profileService.ProfileChanged += OnProfileChanged;
 
@@ -62,19 +63,48 @@ namespace FasterAstap {
             Forget(ApplyAsync(startServer: true));
         }
 
+        /// <summary>
+        /// Runs when N.I.N.A. closes, which is also the last time this code runs
+        /// before an uninstall completes.
+        ///
+        /// The ASTAP path is put back on every exit, not only on uninstall. That is
+        /// the property that makes uninstalling safe without a hook for it: the path
+        /// points here only while this is loaded and serving, so a plugin folder that
+        /// disappears between one run and the next cannot stand the setting up
+        /// against an executable that is no longer there. It is re-adopted on the
+        /// next start, once the index is resident again.
+        /// </summary>
         public override Task Teardown() {
             profileService.ProfileChanged -= OnProfileChanged;
-            // Put the ASTAP path back before going away, or a disabled plugin
-            // leaves N.I.N.A. pointing at an executable that is about to be
-            // deleted with it.
             RestoreAstapLocation();
-            if (StopServerOnExit) {
+
+            // N.I.N.A. uninstalls a plugin by moving its folder away and deleting it
+            // on the next start, so an uninstall during this session leaves the
+            // executable beside this assembly already gone by the time this runs.
+            // There is no uninstall callback, and that absence is the closest thing
+            // to one.
+            //
+            // It is a guess, and it is only allowed to decide something a wrong
+            // guess cannot break. Deleting the plugin folder while N.I.N.A. is shut
+            // down never runs this at all, and then the cache is simply left on the
+            // disk — which costs space and nothing else. Restoring the ASTAP path is
+            // the part that would cost a night, so that happens above, on every
+            // exit, without consulting this.
+            var uninstalled = !SolverPresent;
+
+            if (StopServerOnExit || uninstalled) {
                 try {
                     server.StopAsync().Wait(TimeSpan.FromSeconds(5));
                 } catch (Exception) {
-                    // Going away regardless; a server left running is a held
-                    // gigabyte, not a lost frame.
+                    // Going away regardless. The server also watches this process and
+                    // exits when it does, so a missed stop costs seconds, not a
+                    // stranded three gigabytes.
                 }
+            }
+
+            if (uninstalled) {
+                server.DeleteGeneratedFiles();
+                if (RemoveCacheOnUninstall) IndexServer.DeleteCache(CacheDirectory, out _);
             }
             return base.Teardown();
         }
@@ -86,6 +116,7 @@ namespace FasterAstap {
             RaisePropertyChanged(nameof(Threads));
             RaisePropertyChanged(nameof(IdleExitMinutes));
             RaisePropertyChanged(nameof(UseForPlateSolving));
+            RaisePropertyChanged(nameof(StartWithNina));
             RaisePropertyChanged(nameof(StopServerOnExit));
             Forget(ApplyAsync(startServer: false));
         }
@@ -158,6 +189,26 @@ namespace FasterAstap {
             }
         }
 
+        /// <summary>
+        /// Read the index into memory as soon as N.I.N.A. starts, rather than on the
+        /// first solve that needs it.
+        ///
+        /// This is the point of the plugin: the warm-up is seconds, and paying it
+        /// while N.I.N.A. is still starting up costs nothing, whereas paying it on
+        /// the first solve of the night puts it in the way of something that is
+        /// waiting. Separate from taking the ASTAP path over, because holding the
+        /// index ready is useful even when something else is doing the solving —
+        /// the command line client will use a running server whoever launched it.
+        /// </summary>
+        public bool StartWithNina {
+            get => settings.GetValueBoolean(nameof(StartWithNina), true);
+            set {
+                settings.SetValueBoolean(nameof(StartWithNina), value);
+                RaisePropertyChanged();
+                if (value) Forget(ApplyAsync(startServer: true));
+            }
+        }
+
         public bool StopServerOnExit {
             get => settings.GetValueBoolean(nameof(StopServerOnExit), true);
             set {
@@ -167,18 +218,42 @@ namespace FasterAstap {
         }
 
         /// <summary>
+        /// Delete the index cache when the plugin is uninstalled, so that removing
+        /// it leaves nothing behind.
+        ///
+        /// Worth knowing before leaving this on: the cache is keyed to the star
+        /// database and the tolerance, not to this plugin, so a command line
+        /// astap_index_solve on the same machine is using the very same files. It
+        /// costs correctness nothing — the next run rebuilds what it needs — but it
+        /// can cost that run several minutes.
+        /// </summary>
+        public bool RemoveCacheOnUninstall {
+            get => settings.GetValueBoolean(nameof(RemoveCacheOnUninstall), true);
+            set {
+                settings.SetValueBoolean(nameof(RemoveCacheOnUninstall), value);
+                RaisePropertyChanged();
+            }
+        }
+
+        /// <summary>
         /// Whether N.I.N.A.'s ASTAP path points at this plugin's solver. Turning it
         /// off restores whatever it was before.
+        ///
+        /// On by default, so that installing the plugin is enough and nobody has to
+        /// find a checkbox to get what they installed it for. What it does not do is
+        /// take the path over the moment it is switched on: see AdoptIfReady.
         /// </summary>
         public bool UseForPlateSolving {
-            get => settings.GetValueBoolean(nameof(UseForPlateSolving), false);
+            get => settings.GetValueBoolean(nameof(UseForPlateSolving), true);
             set {
                 settings.SetValueBoolean(nameof(UseForPlateSolving), value);
                 RaisePropertyChanged();
-                if (value) ApplyAstapLocation();
-                else RestoreAstapLocation();
-                RaisePropertyChanged(nameof(AstapLocationInUse));
-                Forget(ApplyAsync(startServer: value));
+                if (value) {
+                    Forget(ApplyAsync(startServer: true));
+                } else {
+                    RestoreAstapLocation();
+                    Activity = "";
+                }
             }
         }
 
@@ -197,6 +272,8 @@ namespace FasterAstap {
                 RaisePropertyChanged();
                 RaisePropertyChanged(nameof(StatusSummary));
                 RaisePropertyChanged(nameof(TimingSummary));
+                RaisePropertyChanged(nameof(CacheDirectory));
+                RaisePropertyChanged(nameof(CacheSummary));
             }
         }
 
@@ -229,9 +306,50 @@ namespace FasterAstap {
             }
         }
 
+        /// <summary>
+        /// Where the index rungs are cached. A running server is the authority,
+        /// since it may have been pointed elsewhere; otherwise the default applies.
+        /// </summary>
+        public string CacheDirectory =>
+            !string.IsNullOrWhiteSpace(Status.CachePath) ? Status.CachePath
+                                                        : IndexServer.DefaultCacheDirectory;
+
+        public string CacheSummary {
+            get {
+                var bytes = IndexServer.DirectorySize(CacheDirectory);
+                if (bytes == 0) return "No index cache on disk. " + CacheDirectory;
+                return string.Format(CultureInfo.InvariantCulture, "{0:0.00} GB cached in {1}",
+                                     bytes / 1e9, CacheDirectory);
+            }
+        }
+
         public ICommand RefreshCommand { get; }
         public ICommand StartServerCommand { get; }
         public ICommand StopServerCommand { get; }
+        public ICommand CleanUpCommand { get; }
+
+        /// <summary>
+        /// Undoes everything this plugin has done to the machine, without waiting
+        /// for an uninstall: the ASTAP path goes back, the server stops, and the
+        /// cache and the generated files are removed. What it cannot do is delete
+        /// the plugin itself, so it says what is left to do.
+        /// </summary>
+        private async Task CleanUpAsync() {
+            RestoreAstapLocation();
+            await server.StopAsync();
+            await Task.Delay(500);
+            var directory = CacheDirectory;
+            var freed = IndexServer.DirectorySize(directory);
+            server.DeleteGeneratedFiles();
+            var done = IndexServer.DeleteCache(directory, out var error);
+            await RefreshStatusAsync();
+            RaisePropertyChanged(nameof(CacheSummary));
+            Activity = done
+                           ? string.Format(CultureInfo.InvariantCulture,
+                                           "Removed {0:0.00} GB and restored the ASTAP path. The plugin itself is removed from Plugins ▸ Installed.",
+                                           freed / 1e9)
+                           : "Restored the ASTAP path, but the cache could not be deleted: " + error;
+        }
 
         // --- doing it ----------------------------------------------------------
 
@@ -239,12 +357,36 @@ namespace FasterAstap {
             try {
                 if (SolverPresent)
                     server.WriteConfig(DatabaseDirectory, Tiers, MaxTier, Threads, IdleExitMinutes);
-                if (UseForPlateSolving) ApplyAstapLocation();
-                if (startServer && UseForPlateSolving && SolverPresent) await StartServerAsync();
+                // Wanting the path taken over implies wanting something to hand it
+                // to, so either setting is reason enough to start the server.
+                if (startServer && SolverPresent && (StartWithNina || UseForPlateSolving))
+                    await StartServerAsync();
                 else await RefreshStatusAsync();
+                AdoptIfReady();
             } catch (Exception e) {
                 Activity = "Could not apply the settings: " + e.Message;
             }
+        }
+
+        /// <summary>
+        /// Takes the ASTAP path over, but only once there is an index in memory to
+        /// take it over with.
+        ///
+        /// The order matters more than it looks. Claiming the path first and warming
+        /// up second would leave N.I.N.A. pointed at a solver that cannot answer for
+        /// as long as the warm-up takes — seconds when the ladder is cached, minutes
+        /// the first time it has to be built, and forever if the star database is
+        /// wrong. A plate solve landing in that window is a lost frame, so the path
+        /// is left alone until a solve would succeed, and the options page says so.
+        /// </summary>
+        private void AdoptIfReady() {
+            if (!UseForPlateSolving || !SolverPresent) return;
+            if (!Status.Running || Status.Tiers == 0) {
+                Activity = "Plate solving is left with ASTAP until the index is in memory.";
+                return;
+            }
+            ApplyAstapLocation();
+            Activity = "";
         }
 
         private async Task StartServerAsync() {
@@ -258,6 +400,7 @@ namespace FasterAstap {
             var ok = await server.StartAsync(TimeSpan.FromMinutes(30));
             Activity = ok ? "" : "The server did not come up. See " + server.LogPath;
             await RefreshStatusAsync();
+            AdoptIfReady();
         }
 
         private async Task StopServerAsync() {
