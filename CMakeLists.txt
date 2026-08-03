@@ -43,6 +43,7 @@ endif ()
 
 add_library(astap_solver
         src/astro_math.cpp
+        src/mapped_file.cpp
         src/parallel.cpp
         src/quad_batch.cpp
         src/quad_index.cpp

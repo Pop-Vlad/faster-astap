@@ -1,13 +1,14 @@
 #include "astap/star_database.h"
 
 #include <algorithm>
-#include <list>
 #include <atomic>
-#include <mutex>
-#include <unordered_map>
 #include <cmath>
 #include <cstdio>
 #include <filesystem>
+#include <fstream>
+#include <list>
+#include <mutex>
+#include <unordered_map>
 
 #include "astap/astro_math.h"
 
@@ -375,70 +376,120 @@ namespace astap {
     return true;
   }
 
-  void StarDatabase::close() {
-    if (file_open_) {
-      file_.close();
-      file_open_ = false;
+  namespace {
+    // The area files of a star database, mapped once and shared by everything
+    // that reads them.
+    //
+    // A solve returns to an area over and over: four tiles cover most fields and
+    // the spiral walks back and forth across them. Opening one of those files
+    // costs about 35 microseconds on Windows, out of the 64 a whole 500 star
+    // request takes, so the open is over half of it. Keeping the mapping alive
+    // between visits removes the open, and the read with it.
+    //
+    // Process wide, because each search thread has its own StarDatabase and they
+    // would otherwise map the same file once per thread. Bounded, so that a long
+    // lived process working across several databases does not accumulate
+    // mappings without limit; the bound is above the area count of either
+    // database, so in the ordinary case nothing is ever evicted.
+    class AreaMaps {
+    public:
+      std::shared_ptr<const MappedFile> get(const std::string &path) {
+        std::lock_guard<std::mutex> lock(mutex_);
+        const auto it = index_.find(path);
+        if (it != index_.end()) {
+          order_.splice(order_.begin(), order_, it->second.where);
+          return it->second.map;
+        }
+
+        auto map = std::make_shared<MappedFile>();
+        if (!map->open(path)) return nullptr;
+        // Deliberately not advise_random(): records run bright to faint from the
+        // start of the file and a request stops once it has enough stars, so the
+        // access is a sequential prefix and read ahead is working with us. That
+        // hint belongs to the index cache, which is queried scattered.
+        order_.push_front(path);
+        index_.emplace(path, Entry{map, order_.begin()});
+
+        // Evicting drops this cache's reference and nothing else: a reader part
+        // way through a mapping holds its own, so its pages stay under it.
+        while (index_.size() > kLimit) {
+          index_.erase(order_.back());
+          order_.pop_back();
+        }
+        return map;
+      }
+
+    private:
+      // Above the 1476 of the largest database, so a whole sky search maps every
+      // area once and keeps them all.
+      static constexpr size_t kLimit = 2048;
+
+      struct Entry {
+        std::shared_ptr<const MappedFile> map;
+        std::list<std::string>::iterator where;
+      };
+
+      std::mutex mutex_;
+      std::list<std::string> order_;  // most recently used first
+      std::unordered_map<std::string, Entry> index_;
+    };
+
+    AreaMaps &area_maps() {
+      static AreaMaps maps;
+      return maps;
     }
+  } // namespace
+
+  void StarDatabase::close() {
+    area_map_.reset();
+    records_ = nullptr;
+    records_size_ = 0;
+    position_ = 0;
   }
 
   bool StarDatabase::open_area(double telescope_dec, int area) {
     cos_telescope_dec_ = std::cos(telescope_dec); // here to save CPU time
 
-    if (area != old_area_ || !file_open_) {
+    if (area != old_area_ || !area_map_) {
       close();
 
       const std::string namefile = name_database_ + "_" + area_filename(database_type_, area);
-      file_.open(database_path_ + namefile, std::ios::binary);
-      if (!file_.is_open()) return false;
-      file_open_ = true;
-
-      cache_valid_pos_ = 0;
-
-      char header[110];
-      file_.read(header, 110); // 10x11 is 110 bytes
-      if (file_.gcount() != 110) {
+      area_map_ = area_maps().get(database_path_ + namefile);
+      if (!area_map_) return false;
+      if (area_map_->size() < 110) { // 10x11 is 110 bytes
         close();
         return false;
       }
-      record_size_ = header[109] == ' ' ? 11 : static_cast<unsigned char>(header[109]);
-      database_version_ = static_cast<unsigned char>(header[108]);
 
-      file_.seekg(0, std::ios::end);
-      const std::streamoff size = file_.tellg();
-      file_.seekg(110, std::ios::beg);
-      cache_size_ = static_cast<size_t>(size) - 110;
+      const uint8_t *header = area_map_->data();
+      record_size_ = header[109] == ' ' ? 11 : header[109];
+      database_version_ = header[108];
 
-      if (cache_size_ > cache_.size()) cache_.resize(cache_size_); // only grow, resizing costs time
-
+      records_ = header + 110;
+      records_size_ = area_map_->size() - 110;
       old_area_ = area;
     }
-    // else: re-use the data already in the cache
+    // else: this reader already holds the mapping for that area
 
-    cache_position_ = 0;
+    position_ = 0;
     return true;
   }
 
   bool StarDatabase::read_star(double telescope_ra, double telescope_dec, double field_diameter,
                                double &ra, double &dec, double &mag, double &b_v) {
-    constexpr size_t kBlockSize = 5 * 6 * 4 * 1024; // a multiple of the record sizes 5 and 6
-
     double delta_ra;
     do {
       bool header_record;
       do {
-        if (cache_position_ >= cache_size_) return false; // end of file, no more data
+        // The whole record has to be there, not just its first byte. A file
+        // whose length is not a whole number of records would otherwise be read
+        // past its end, which used to run off a heap buffer quietly and would
+        // now run off a mapping and fault.
+        if (position_ + static_cast<size_t>(record_size_) > records_size_)
+          return false; // end of file, no more data
 
-        if (cache_position_ >= cache_valid_pos_) {
-          size_t block_to_read = std::min(cache_size_, kBlockSize);
-          block_to_read = std::min(block_to_read, cache_size_ - cache_valid_pos_);
-          file_.read(reinterpret_cast<char *>(cache_.data() + cache_valid_pos_),
-                     static_cast<std::streamsize>(block_to_read));
-          cache_valid_pos_ += block_to_read;
-        }
-
-        const uint8_t *rec = cache_.data() + cache_position_;
-        cache_position_ += static_cast<size_t>(record_size_);
+        const uint8_t *rec = records_ + position_;
+        position_ += static_cast<size_t>(record_size_);
 
         header_record = false;
         if (record_size_ == 5 || record_size_ == 6) {

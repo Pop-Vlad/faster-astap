@@ -156,28 +156,104 @@ namespace astap {
   }
 
   size_t QuadIndex::bytes() const {
-    return ratio_.size() * sizeof(float) + (d1_.size() + ra_.size() + dec_.size()) * sizeof(double) +
-           (cell_start_.size() + items_.size()) * sizeof(uint32_t);
+    // What the index addresses, whether that memory is this process's or a
+    // mapped file's. Reported as the index size, so it should not change with
+    // where the quads happen to live.
+    const uint64_t ncells = static_cast<uint64_t>(nbins_) * nbins_ * nbins_;
+    return nquads_ * (5 * sizeof(float) + 3 * sizeof(double) + sizeof(uint32_t)) +
+           static_cast<size_t>(nbins_ > 0 ? (ncells + 1) * sizeof(uint32_t) : 0);
+  }
+
+  void QuadIndex::repoint() {
+    // A mapped index has every view aimed into the mapping by the loader, and
+    // holds no vectors that could have moved.
+    if (map_) return;
+    nquads_ = d1_.size();
+    v_ratio_ = ratio_.data();
+    v_d1_ = d1_.data();
+    v_ra_ = ra_.data();
+    v_dec_ = dec_.data();
+    v_cell_start_ = cell_start_.data();
+    v_items_ = items_.data();
+    nitems_ = items_.size();
+  }
+
+  QuadIndex &QuadIndex::operator=(const QuadIndex &o) {
+    if (this != &o) {
+      settings_ = o.settings_;
+      map_ = o.map_;
+      ratio_ = o.ratio_;
+      d1_ = o.d1_;
+      ra_ = o.ra_;
+      dec_ = o.dec_;
+      cell_start_ = o.cell_start_;
+      items_ = o.items_;
+      nbins_ = o.nbins_;
+      nquads_ = o.nquads_;
+      // Carried over as they are for a mapped index, which now shares the same
+      // mapping; overwritten by repoint() for an owning one, whose vectors this
+      // has just copied.
+      v_ratio_ = o.v_ratio_;
+      v_d1_ = o.v_d1_;
+      v_ra_ = o.v_ra_;
+      v_dec_ = o.v_dec_;
+      v_cell_start_ = o.v_cell_start_;
+      v_items_ = o.v_items_;
+      nitems_ = o.nitems_;
+      repoint();
+    }
+    return *this;
+  }
+
+  QuadIndex &QuadIndex::operator=(QuadIndex &&o) noexcept {
+    if (this != &o) {
+      settings_ = o.settings_;
+      map_ = std::move(o.map_);
+      ratio_ = std::move(o.ratio_);
+      d1_ = std::move(o.d1_);
+      ra_ = std::move(o.ra_);
+      dec_ = std::move(o.dec_);
+      cell_start_ = std::move(o.cell_start_);
+      items_ = std::move(o.items_);
+      nbins_ = o.nbins_;
+      nquads_ = o.nquads_;
+      v_ratio_ = o.v_ratio_;
+      v_d1_ = o.v_d1_;
+      v_ra_ = o.v_ra_;
+      v_dec_ = o.v_dec_;
+      v_cell_start_ = o.v_cell_start_;
+      v_items_ = o.v_items_;
+      nitems_ = o.nitems_;
+      repoint();
+    }
+    return *this;
   }
 
   void QuadIndex::finalise() {
+    // So that size() and ratios() below read from whichever storage this index
+    // holds: the loader has mapped the quads, the build path has just filled the
+    // vectors, and the grid is built the same way from either.
+    repoint();
+
     // Bin on the first three ratios. They lie in (0,1], so the bin count is
     // 1/tolerance plus a slot for the value 1.
     nbins_ = static_cast<int>(1.0 / settings_.quad_tolerance) + 2;
     const size_t ncells = static_cast<size_t>(nbins_) * nbins_ * nbins_;
     cell_start_.assign(ncells + 1, 0);
-    std::vector<uint32_t> cell_of_quad(d1_.size());
-    for (size_t i = 0; i < d1_.size(); i++) {
+    std::vector<uint32_t> cell_of_quad(nquads_);
+    for (size_t i = 0; i < nquads_; i++) {
       const float *r = ratios(i);
       const uint32_t c = cell_of(bin_of(r[0]), bin_of(r[1]), bin_of(r[2]));
       cell_of_quad[i] = c;
       cell_start_[c + 1]++;
     }
     for (size_t c = 0; c < ncells; c++) cell_start_[c + 1] += cell_start_[c];
-    items_.resize(d1_.size());
+    items_.resize(nquads_);
     std::vector<uint32_t> fill(cell_start_.begin(), cell_start_.end() - 1);
-    for (size_t i = 0; i < d1_.size(); i++)
+    for (size_t i = 0; i < nquads_; i++)
       items_[fill[cell_of_quad[i]]++] = static_cast<uint32_t>(i);
+
+    repoint(); // the grid vectors have just been rebuilt
   }
 
   bool QuadIndex::build(StarDatabase &db, const QuadIndexSettings &s,
@@ -272,11 +348,19 @@ namespace astap {
     // match: a file read with the wrong endianness or an older layout would not
     // fail, it would match against nonsense.
     const char kIndexMagic[8] = {'A', 'S', 'T', 'A', 'P', 'Q', 'I', 'X'};
-    // 3: every array starts on a kAlign boundary, so the file can be mapped and
-    // the arrays used where they lie. Version 2 packed them end to end, which
-    // left d1, ra and dec at a 4 byte offset whenever a tier held an odd number
-    // of quads — readable through a copying read, not addressable as doubles.
-    constexpr uint32_t kIndexVersion = 3;
+    // 4: the bin grid is stored alongside the quads, and every array starts on a
+    // kAlign boundary, so loading is a header parse and a mapping and the pages
+    // a query never reaches are never read.
+    //
+    // Storing the grid is what makes the mapping worth having. Version 3 rebuilt
+    // it on load, which meant scanning every quad's ratios — the one access
+    // pattern that faults in the entire file, and measurably slower through a
+    // mapping than the bulk read it replaced. It costs about 15% more on disk.
+    //
+    // Version 2 additionally packed the arrays end to end, which left d1, ra and
+    // dec at a 4 byte offset whenever a tier held an odd number of quads:
+    // readable through a copying read, not addressable as doubles.
+    constexpr uint32_t kIndexVersion = 4;
     constexpr uint32_t kByteOrderMark = 0x01020304u;
 
     // 8 would be enough to make the doubles naturally aligned. A cache line
@@ -296,18 +380,11 @@ namespace astap {
       f.read(reinterpret_cast<char *>(&v), sizeof(T));
     }
 
+    // Written from the index's views rather than its vectors, so that a tier
+    // read from one cache file can be written back out to another.
     template <typename T>
-    void put_array(std::ostream &f, const std::vector<T> &v) {
-      if (!v.empty())
-        f.write(reinterpret_cast<const char *>(v.data()),
-                static_cast<std::streamsize>(v.size() * sizeof(T)));
-    }
-
-    template <typename T>
-    void get_array(std::istream &f, std::vector<T> &v, size_t n) {
-      v.resize(n);
-      if (n)
-        f.read(reinterpret_cast<char *>(v.data()), static_cast<std::streamsize>(n * sizeof(T)));
+    void put_view(std::ostream &f, const T *p, size_t n) {
+      if (n) f.write(reinterpret_cast<const char *>(p), static_cast<std::streamsize>(n * sizeof(T)));
     }
 
     // Fixed size header, so tier blob offsets can be computed before writing.
@@ -317,26 +394,37 @@ namespace astap {
       uint64_t offset;
     };
 
+    // magic, version, byte order, database type, tier count, bin count, a spare
+    // word, then the four doubles and the tier table. 64 bytes before the table,
+    // which is the alignment, so a file with no padding at all is still legal.
     size_t header_bytes(size_t ntiers) {
-      return sizeof(kIndexMagic) + 3 * sizeof(uint32_t) + sizeof(uint32_t) /* ntiers */ +
+      return sizeof(kIndexMagic) + 5 * sizeof(uint32_t) + sizeof(uint32_t) /* reserved */ +
              4 * sizeof(double) + ntiers * sizeof(TierEntry);
     }
 
-    // Where one tier's four arrays sit, relative to the start of the file. The
-    // writer and the reader both derive them from the tier's own offset and quad
-    // count, so the two cannot come to disagree about the layout.
+    // Where one tier's six arrays sit, relative to the start of the file. The
+    // writer and the reader both derive them from the tier's own offset, quad
+    // count and the file's cell count, so the two cannot come to disagree about
+    // the layout.
     struct TierLayout {
-      uint64_t ratio, d1, ra, dec, end;
+      uint64_t ratio, d1, ra, dec, cell_start, items, end;
     };
 
-    TierLayout tier_layout(uint64_t base, uint64_t nquads) {
+    TierLayout tier_layout(uint64_t base, uint64_t nquads, uint64_t ncells) {
       TierLayout l;
       l.ratio = base;
       l.d1 = align_up(l.ratio + nquads * 5 * sizeof(float));
       l.ra = align_up(l.d1 + nquads * sizeof(double));
       l.dec = align_up(l.ra + nquads * sizeof(double));
-      l.end = align_up(l.dec + nquads * sizeof(double));
+      l.cell_start = align_up(l.dec + nquads * sizeof(double));
+      // One past the last cell, so a query can read cell_start[c + 1].
+      l.items = align_up(l.cell_start + (ncells + 1) * sizeof(uint32_t));
+      l.end = align_up(l.items + nquads * sizeof(uint32_t));
       return l;
+    }
+
+    uint64_t cells_for(uint32_t nbins) {
+      return static_cast<uint64_t>(nbins) * nbins * nbins;
     }
 
     // Writes zeros up to `target`, keeping `pos` in step with the stream.
@@ -361,12 +449,18 @@ namespace astap {
     if (!f) return false;
 
     const QuadIndexSettings &s0 = tiers.front().settings();
+    // The bin count follows from the tolerance, which the whole file shares, so
+    // every tier's grid is the same shape.
+    const uint32_t nbins = static_cast<uint32_t>(tiers.front().nbins_);
+    const uint64_t ncells = cells_for(nbins);
+    if (nbins == 0) return false; // never finalised, so there is no grid to write
+
     std::vector<TierEntry> entries(tiers.size());
     uint64_t offset = align_up(header_bytes(tiers.size()));
     for (size_t k = 0; k < tiers.size(); k++) {
       const uint64_t n = tiers[k].size();
       entries[k] = {tiers[k].settings().star_density, n, offset};
-      offset = tier_layout(offset, n).end;
+      offset = tier_layout(offset, n, ncells).end;
     }
 
     f.write(kIndexMagic, sizeof(kIndexMagic));
@@ -374,6 +468,8 @@ namespace astap {
     put(f, kByteOrderMark);
     put(f, static_cast<uint32_t>(tiers.front().settings().radius_deg >= 180 ? 0 : 1));
     put(f, static_cast<uint32_t>(tiers.size()));
+    put(f, nbins);
+    put(f, static_cast<uint32_t>(0)); // reserved, and keeps the doubles aligned
     put(f, s0.quad_tolerance);
     put(f, s0.centre_ra);
     put(f, s0.centre_dec);
@@ -383,19 +479,27 @@ namespace astap {
     uint64_t pos = header_bytes(tiers.size());
     for (size_t k = 0; k < tiers.size(); k++) {
       const QuadIndex &ix = tiers[k];
-      const TierLayout l = tier_layout(entries[k].offset, entries[k].nquads);
+      const uint64_t n = entries[k].nquads;
+      if (static_cast<uint32_t>(ix.nbins_) != nbins) return false; // mismatched grids
+      const TierLayout l = tier_layout(entries[k].offset, n, ncells);
       pad_to(f, pos, l.ratio);
-      put_array(f, ix.ratio_);
-      pos += ix.ratio_.size() * sizeof(float);
+      put_view(f, ix.v_ratio_, n * 5);
+      pos += n * 5 * sizeof(float);
       pad_to(f, pos, l.d1);
-      put_array(f, ix.d1_);
-      pos += ix.d1_.size() * sizeof(double);
+      put_view(f, ix.v_d1_, n);
+      pos += n * sizeof(double);
       pad_to(f, pos, l.ra);
-      put_array(f, ix.ra_);
-      pos += ix.ra_.size() * sizeof(double);
+      put_view(f, ix.v_ra_, n);
+      pos += n * sizeof(double);
       pad_to(f, pos, l.dec);
-      put_array(f, ix.dec_);
-      pos += ix.dec_.size() * sizeof(double);
+      put_view(f, ix.v_dec_, n);
+      pos += n * sizeof(double);
+      pad_to(f, pos, l.cell_start);
+      put_view(f, ix.v_cell_start_, ncells + 1);
+      pos += (ncells + 1) * sizeof(uint32_t);
+      pad_to(f, pos, l.items);
+      put_view(f, ix.v_items_, n);
+      pos += n * sizeof(uint32_t);
       pad_to(f, pos, l.end); // so the next tier, and the file, end aligned too
     }
     f.flush();
@@ -414,7 +518,7 @@ namespace astap {
       if (!f || std::memcmp(magic, kIndexMagic, sizeof(magic)) != 0)
         return fail(error, path + " is not a quad index file");
 
-      uint32_t version = 0, bom = 0, reserved = 0, ntiers = 0;
+      uint32_t version = 0, bom = 0, reserved = 0, ntiers = 0, nbins = 0, spare = 0;
       get(f, version);
       get(f, bom);
       get(f, reserved);
@@ -423,8 +527,15 @@ namespace astap {
         return fail(error, path + " was written by a different version, rebuild it");
       if (bom != kByteOrderMark) return fail(error, path + " has the opposite byte order");
       if (ntiers == 0 || ntiers > 4096) return fail(error, path + " has an implausible tier count");
+      get(f, nbins);
+      get(f, spare);
+      // The grid is indexed by cell number, so an implausible bin count would
+      // send a query reading somewhere the tier does not reach. 4096 bins is a
+      // tolerance of 0.00024, far finer than anything that matches.
+      if (nbins < 2 || nbins > 4096) return fail(error, path + " has an implausible bin count");
 
       info.version = version;
+      info.nbins = nbins;
       info.database_type = static_cast<int>(reserved);
       get(f, info.quad_tolerance);
       get(f, info.centre_ra);
@@ -439,7 +550,8 @@ namespace astap {
         get(f, entries[k]);
         info.densities.push_back(entries[k].density);
         info.quads.push_back(entries[k].nquads);
-        info.bytes += entries[k].nquads * (5 * sizeof(float) + 3 * sizeof(double));
+        info.bytes += entries[k].nquads * (5 * sizeof(float) + 3 * sizeof(double) + sizeof(uint32_t)) +
+                      (cells_for(nbins) + 1) * sizeof(uint32_t);
       }
       if (!f) return fail(error, path + " is truncated");
       return true;
@@ -459,12 +571,27 @@ namespace astap {
     QuadIndexFile info;
     std::vector<TierEntry> entries;
     if (!open_and_read_header(path, f, info, entries, error)) return false;
+    f.close();
+
+    // One mapping for the whole file, shared by every tier taken out of it. The
+    // quad arrays are then used where they lie: nothing is copied into this
+    // process, and a page no query ever reaches is never read at all.
+    const auto map = std::make_shared<MappedFile>();
+    if (!map->open(path, error)) return false;
+    map->advise_random();
+    const uint8_t *base = map->data();
+    const uint64_t ncells = cells_for(info.nbins);
 
     for (const TierEntry &e : entries) {
       if (min_density > 0 && e.density < min_density) continue;
       if (max_density > 0 && e.density > max_density) continue;
 
-      const TierLayout l = tier_layout(e.offset, e.nquads);
+      // The offsets come out of the file, so they are checked rather than
+      // trusted: a wrong one would otherwise be a pointer into nothing, and a
+      // misaligned one a double read the hardware may refuse.
+      if (e.offset % kAlign != 0) return fail(error, path + " has a misaligned tier");
+      const TierLayout l = tier_layout(e.offset, e.nquads, ncells);
+      if (l.end > map->size()) return fail(error, path + " is truncated");
 
       QuadIndex ix;
       ix.settings_.star_density = e.density;
@@ -472,18 +599,18 @@ namespace astap {
       ix.settings_.centre_ra = info.centre_ra;
       ix.settings_.centre_dec = info.centre_dec;
       ix.settings_.radius_deg = info.radius_deg;
-      // Each array is sought to in turn rather than read end to end: they are
-      // padded apart so that a mapped file can address them in place.
-      f.seekg(static_cast<std::streamoff>(l.ratio));
-      get_array(f, ix.ratio_, static_cast<size_t>(e.nquads) * 5);
-      f.seekg(static_cast<std::streamoff>(l.d1));
-      get_array(f, ix.d1_, static_cast<size_t>(e.nquads));
-      f.seekg(static_cast<std::streamoff>(l.ra));
-      get_array(f, ix.ra_, static_cast<size_t>(e.nquads));
-      f.seekg(static_cast<std::streamoff>(l.dec));
-      get_array(f, ix.dec_, static_cast<size_t>(e.nquads));
-      if (!f) return fail(error, path + " is truncated");
-      ix.finalise();
+      ix.map_ = map;
+      ix.nbins_ = static_cast<int>(info.nbins);
+      ix.nquads_ = static_cast<size_t>(e.nquads);
+      ix.nitems_ = static_cast<size_t>(e.nquads);
+      ix.v_ratio_ = reinterpret_cast<const float *>(base + l.ratio);
+      ix.v_d1_ = reinterpret_cast<const double *>(base + l.d1);
+      ix.v_ra_ = reinterpret_cast<const double *>(base + l.ra);
+      ix.v_dec_ = reinterpret_cast<const double *>(base + l.dec);
+      // The grid comes out of the file too, which is the whole point: rebuilding
+      // it would mean reading every quad, and then nothing would be lazy.
+      ix.v_cell_start_ = reinterpret_cast<const uint32_t *>(base + l.cell_start);
+      ix.v_items_ = reinterpret_cast<const uint32_t *>(base + l.items);
       out.push_back(std::move(ix));
     }
     if (out.empty()) return fail(error, path + " holds no tier in the requested density range");
@@ -543,7 +670,7 @@ namespace astap {
   }
 
   void QuadIndex::query(const float *r, std::vector<uint32_t> &hits) const {
-    if (items_.empty()) return;
+    if (nitems_ == 0) return;
     const float tol = static_cast<float>(settings_.quad_tolerance);
     const int b0 = bin_of(r[0]), b1 = bin_of(r[1]), b2 = bin_of(r[2]);
 
@@ -557,8 +684,8 @@ namespace astap {
           const int c2 = b2 + k;
           if (c2 < 0 || c2 >= nbins_) continue;
           const uint32_t c = cell_of(c0, c1, c2);
-          for (uint32_t p = cell_start_[c]; p < cell_start_[c + 1]; p++) {
-            const uint32_t q = items_[p];
+          for (uint32_t p = v_cell_start_[c]; p < v_cell_start_[c + 1]; p++) {
+            const uint32_t q = v_items_[p];
             const float *s = ratios(q);
             if (std::fabs(s[0] - r[0]) <= tol && std::fabs(s[1] - r[1]) <= tol &&
                 std::fabs(s[2] - r[2]) <= tol && std::fabs(s[3] - r[3]) <= tol &&

@@ -51,7 +51,7 @@ namespace {
   }
 
   // Parses the header and returns the tier table, or an empty vector.
-  std::vector<Tier> parse_header(std::istream &f, uint32_t &version) {
+  std::vector<Tier> parse_header(std::istream &f, uint32_t &version, uint32_t &nbins) {
     char magic[8];
     f.read(magic, sizeof(magic));
     if (!f || std::memcmp(magic, "ASTAPQIX", 8) != 0) return {};
@@ -59,6 +59,8 @@ namespace {
     read_pod<uint32_t>(f); // byte order mark
     read_pod<uint32_t>(f); // database type
     const uint32_t ntiers = read_pod<uint32_t>(f);
+    nbins = read_pod<uint32_t>(f);
+    read_pod<uint32_t>(f);                          // reserved
     for (int i = 0; i < 4; i++) read_pod<double>(f); // tolerance, centre, radius
     std::vector<Tier> tiers(ntiers);
     for (uint32_t k = 0; k < ntiers; k++) {
@@ -115,11 +117,13 @@ int main() {
   // --- the layout, re-derived from the header ------------------------------
   {
     std::ifstream f(path, std::ios::binary);
-    uint32_t version = 0;
-    const std::vector<Tier> tiers = parse_header(f, version);
+    uint32_t version = 0, nbins = 0;
+    const std::vector<Tier> tiers = parse_header(f, version, nbins);
     check(!tiers.empty(), "header parses");
-    check(version >= 3, "version is at least 3 (the padded layout)");
+    check(version >= 4, "version is at least 4 (padded arrays, stored grid)");
+    check(nbins >= 2, "the header carries a plausible bin count");
     check(tiers.size() == built.size(), "tier count matches");
+    const uint64_t ncells = static_cast<uint64_t>(nbins) * nbins * nbins;
 
     for (size_t k = 0; k < tiers.size() && k < built.size(); k++) {
       const uint64_t n = tiers[k].nquads;
@@ -130,23 +134,34 @@ int main() {
       const uint64_t d1 = align_up(ratio + n * 5 * sizeof(float));
       const uint64_t ra = align_up(d1 + n * sizeof(double));
       const uint64_t dec = align_up(ra + n * sizeof(double));
+      const uint64_t cell_start = align_up(dec + n * sizeof(double));
+      const uint64_t items = align_up(cell_start + (ncells + 1) * sizeof(uint32_t));
 
       // The invariant that makes the file mappable.
       check(ratio % kAlign == 0, at + " ratio array is aligned");
       check(d1 % kAlign == 0, at + " d1 array is aligned");
       check(ra % kAlign == 0, at + " ra array is aligned");
       check(dec % kAlign == 0, at + " dec array is aligned");
-      check(dec + n * sizeof(double) <= file_size, at + " lies inside the file");
+      check(cell_start % kAlign == 0, at + " cell_start array is aligned");
+      check(items % kAlign == 0, at + " items array is aligned");
+      check(items + n * sizeof(uint32_t) <= file_size, at + " lies inside the file");
 
       // The offsets are only right if the data is actually there. Reading one
       // double at the derived position of the last element ties the two.
-      if (n > 0 && dec + n * sizeof(double) <= file_size) {
+      if (n > 0 && items + n * sizeof(uint32_t) <= file_size) {
         f.seekg(static_cast<std::streamoff>(d1 + (n - 1) * sizeof(double)));
         check(read_pod<double>(f) == built[k].d1(n - 1), at + " d1 lands where derived");
         f.seekg(static_cast<std::streamoff>(ra + (n - 1) * sizeof(double)));
         check(read_pod<double>(f) == built[k].centre_ra(n - 1), at + " ra lands where derived");
         f.seekg(static_cast<std::streamoff>(dec + (n - 1) * sizeof(double)));
         check(read_pod<double>(f) == built[k].centre_dec(n - 1), at + " dec lands where derived");
+
+        // The CSR grid is only consistent if its last offset is the quad count:
+        // every quad has to sit in exactly one cell.
+        f.seekg(static_cast<std::streamoff>(cell_start + ncells * sizeof(uint32_t)));
+        check(read_pod<uint32_t>(f) == n, at + " the stored grid indexes every quad");
+        f.seekg(static_cast<std::streamoff>(cell_start));
+        check(read_pod<uint32_t>(f) == 0, at + " the stored grid starts at zero");
       }
     }
   }
@@ -161,7 +176,19 @@ int main() {
     } else {
       check(loaded.size() == built.size(), "round trip tier count");
       for (size_t k = 0; k < loaded.size() && k < built.size(); k++) {
+        check(loaded[k].mapped(), "the loaded tier reads out of the mapping");
         check(loaded[k].size() == built[k].size(), "round trip quad count");
+
+        // The grid came off disk rather than being rebuilt, so what matters is
+        // that it still answers exactly as the one built in memory does.
+        bool same_hits = true;
+        for (size_t i = 0; i < loaded[k].size() && same_hits; i += 97) {
+          std::vector<uint32_t> a, b;
+          built[k].query(built[k].ratios(i), a);
+          loaded[k].query(loaded[k].ratios(i), b);
+          same_hits = a == b && !a.empty();
+        }
+        check(same_hits, "the stored grid answers queries as the built one does");
         check(loaded[k].settings().star_density == built[k].settings().star_density,
               "round trip density");
         bool same = true;

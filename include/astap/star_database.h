@@ -18,9 +18,11 @@
 #pragma once
 
 #include <cstdint>
-#include <fstream>
+#include <memory>
 #include <string>
 #include <vector>
+
+#include "astap/mapped_file.h"
 
 namespace astap {
   enum DatabaseType : int {
@@ -101,20 +103,26 @@ namespace astap {
     int database_type_ = kDatabase1476;
     int database_version_ = 0;
 
-    std::ifstream file_;
-    bool file_open_ = false;
     int old_area_ = 9999999;
 
     int record_size_ = 11;
     int8_t dec9_storage_ = 0;
     double cos_telescope_dec_ = 1.0;
 
-    // The whole file is cached: re-using it is about 35% faster for a field of
-    // view of 0.5 degrees, where reading the database is 60% of the total time.
-    std::vector<uint8_t> cache_;
-    size_t cache_size_ = 0;
-    size_t cache_valid_pos_ = 0;
-    size_t cache_position_ = 0;
+    // The area file this reader is working through, mapped rather than read.
+    //
+    // The mapping is shared with every other reader of the same area — the
+    // search threads have a StarDatabase each — and comes from a process wide
+    // cache that keeps it alive between visits. That is what removes the file
+    // open, which is over half the cost of reaching a star: the records are then
+    // addressed where they lie, with no copy and no per reader buffer.
+    //
+    // Held by shared_ptr so that a mapping evicted from that cache stays valid
+    // for a reader still part way through it.
+    std::shared_ptr<const MappedFile> area_map_;
+    const uint8_t *records_ = nullptr;  // first record, past the 110 byte header
+    size_t records_size_ = 0;
+    size_t position_ = 0;
 
     std::vector<float> wide_field_stars_;
     std::string wide_database_;

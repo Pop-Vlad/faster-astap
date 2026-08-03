@@ -5,9 +5,12 @@
 
 #include <cstdint>
 #include <functional>
+#include <memory>
 #include <string>
+#include <utility>
 #include <vector>
 
+#include "astap/mapped_file.h"
 #include "astap/star_database.h"
 #include "astap/types.h"
 
@@ -46,19 +49,34 @@ namespace astap {
   // the tolerance is 3.2e-7, a 21800x margin), scale and position in fp64.
   class QuadIndex {
   public:
+    QuadIndex() = default;
+
+    // The quad arrays are addressed through pointers, which a copy or a move of
+    // the owning vectors invalidates, so both have to re-point them. Tiers are
+    // copied into and moved around vectors on every load, so this is not a
+    // theoretical case.
+    QuadIndex(const QuadIndex &o) { *this = o; }
+    QuadIndex(QuadIndex &&o) noexcept { *this = std::move(o); }
+    QuadIndex &operator=(const QuadIndex &o);
+    QuadIndex &operator=(QuadIndex &&o) noexcept;
+
     // Builds the index by walking the database tiles. Returns false when the
     // database cannot be read. `progress` is called with a 0..1 fraction.
     bool build(StarDatabase &db, const QuadIndexSettings &s,
                const std::function<void(double)> &progress = nullptr);
 
-    size_t size() const { return d1_.size(); }
+    size_t size() const { return nquads_; }
     const QuadIndexSettings &settings() const { return settings_; }
 
     // Ratios 1..5 of one quad.
-    const float *ratios(size_t i) const { return &ratio_[i * 5]; }
-    double d1(size_t i) const { return d1_[i]; }        // longest side, arcsec
-    double centre_ra(size_t i) const { return ra_[i]; }  // quad centre, radians
-    double centre_dec(size_t i) const { return dec_[i]; }
+    const float *ratios(size_t i) const { return v_ratio_ + i * 5; }
+    double d1(size_t i) const { return v_d1_[i]; }        // longest side, arcsec
+    double centre_ra(size_t i) const { return v_ra_[i]; }  // quad centre, radians
+    double centre_dec(size_t i) const { return v_dec_[i]; }
+
+    // True when the quads are read straight out of a mapped cache file rather
+    // than held in this process's own memory.
+    bool mapped() const { return map_ != nullptr; }
 
     // Appends the indices of every quad whose five ratios lie within
     // `quad_tolerance` of the given ones.
@@ -78,19 +96,37 @@ namespace astap {
     // arrays are complete, by either build path.
     void finalise();
 
+    // Aims the views below at whatever storage this instance holds. Call after
+    // the owning vectors are filled, or after they move.
+    void repoint();
+
     // Bin on the first three ratios; probing the 3x3x3 neighbourhood covers the
     // tolerance ball in those dimensions, the other two are checked exactly.
     int bin_of(float v) const;
     uint32_t cell_of(int b0, int b1, int b2) const;
 
     QuadIndexSettings settings_;
+
+    // The quads sit in one of two places: these vectors, when the index was
+    // built in this process, or a mapped cache file shared with the other tiers
+    // that came out of it. Everything that reads a quad goes through the views,
+    // so the two cases are distinguished here and nowhere else.
+    std::shared_ptr<const MappedFile> map_;
     std::vector<float> ratio_;   // 5 per quad
     std::vector<double> d1_;
     std::vector<double> ra_, dec_;
-
-    int nbins_ = 0;
     std::vector<uint32_t> cell_start_;  // CSR over the 3D bin grid
     std::vector<uint32_t> items_;
+
+    const float *v_ratio_ = nullptr;
+    const double *v_d1_ = nullptr;
+    const double *v_ra_ = nullptr;
+    const double *v_dec_ = nullptr;
+    const uint32_t *v_cell_start_ = nullptr;
+    const uint32_t *v_items_ = nullptr;
+    size_t nquads_ = 0;
+    size_t nitems_ = 0;
+    int nbins_ = 0;
   };
 
   // Builds one index per requested depth tier in a single pass over the database.
@@ -132,6 +168,7 @@ namespace astap {
 
   struct QuadIndexFile {
     uint32_t version = 0;
+    uint32_t nbins = 0;  // bins per ratio axis; the grid holds nbins^3 cells
     int database_type = 0;
     double quad_tolerance = 0;
     double centre_ra = 0, centre_dec = 0, radius_deg = 180;
