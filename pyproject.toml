@@ -1,0 +1,47 @@
+[build-system]
+requires = ["scikit-build-core>=0.9", "pybind11>=2.12"]
+build-backend = "scikit_build_core.build"
+
+[project]
+name = "faster-astap"
+version = "0.1.0"
+description = "Fast astrometric plate solving: ASTAP's algorithm in C++, plus a whole-sky index solver"
+readme = "README.md"
+requires-python = ">=3.9"
+license = { text = "MPL-2.0" }
+authors = [{ name = "Vlad Pop" }]
+keywords = ["astronomy", "astrometry", "plate solving", "astap", "wcs", "fits"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Science/Research",
+    "License :: OSI Approved :: Mozilla Public License 2.0 (MPL 2.0)",
+    "Programming Language :: C++",
+    "Programming Language :: Python :: 3",
+    "Topic :: Scientific/Engineering :: Astronomy",
+]
+dependencies = ["numpy>=1.21"]
+
+[project.optional-dependencies]
+wcs = ["astropy>=5.0"]
+test = ["pytest>=7"]
+
+[project.urls]
+Homepage = "https://github.com/vladpop/faster-astap"
+Source = "https://github.com/vladpop/faster-astap"
+
+[tool.scikit-build]
+# The package is laid out under python/, so that the C++ sources at the top of
+# the repository stay where the CMake build expects them.
+wheel.packages = ["python/faster_astap"]
+cmake.version = ">=3.15"
+build-dir = "build/{wheel_tag}"
+sdist.exclude = ["corpus", "cmake-build-*", "build", "dist", "nina-plugin/plugin"]
+
+[tool.scikit-build.cmake.define]
+ASTAP_PYTHON = "ON"
+# The two command line solvers and the N.I.N.A. server are not part of the
+# wheel, and building them would only slow it down.
+ASTAP_NINA_INTEGRATION = "OFF"
+
+[tool.pytest.ini_options]
+testpaths = ["python/tests"]

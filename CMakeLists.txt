@@ -309,6 +309,46 @@ if (WIN32 AND NOT CMAKE_VERSION VERSION_LESS 3.16)
     ]])
 endif ()
 
+# --- the Python extension ------------------------------------------------------
+# Off by default: an ordinary build of the two solvers should not need a Python
+# installation. `pip install .` turns it on through pyproject.toml.
+#
+# It links astap_solver, which depends on nothing but the standard library, so a
+# wheel carries no third party libraries at all. ASTAP_PYTHON_IMAGE_IO adds
+# astap_image on top, which brings whatever image decoders this machine has; the
+# formats that need no library — FITS, .fz, Netpbm, BMP — come either way.
+option(ASTAP_PYTHON "Build the faster_astap Python extension module" OFF)
+option(ASTAP_PYTHON_IMAGE_IO "Let the Python module read image files, not just arrays" ON)
+
+if (ASTAP_PYTHON)
+    find_package(Python 3.9 REQUIRED COMPONENTS Interpreter Development.Module)
+    # Prefer an installed pybind11 — the one pyproject.toml asks for, or the
+    # system package — and fetch it only when there is none, so a build never
+    # silently depends on the network when it did not have to.
+    find_package(pybind11 CONFIG QUIET)
+    if (NOT pybind11_FOUND)
+        message(STATUS "pybind11 not installed, fetching it")
+        include(FetchContent)
+        FetchContent_Declare(pybind11
+                GIT_REPOSITORY https://github.com/pybind/pybind11.git
+                GIT_TAG v2.13.6
+                GIT_SHALLOW TRUE)
+        FetchContent_MakeAvailable(pybind11)
+    endif ()
+
+    pybind11_add_module(_core python/src/module.cpp)
+    if (ASTAP_PYTHON_IMAGE_IO)
+        target_link_libraries(_core PRIVATE astap_image)
+        target_compile_definitions(_core PRIVATE ASTAP_PYTHON_IMAGE_IO)
+    else ()
+        target_link_libraries(_core PRIVATE astap_solver)
+    endif ()
+
+    # Into the package directory, so the module is importable from the source
+    # tree as well as from an installed wheel.
+    install(TARGETS _core LIBRARY DESTINATION faster_astap)
+endif ()
+
 enable_testing()
 add_executable(solver_tests tests/solver_tests.cpp)
 target_link_libraries(solver_tests PRIVATE astap_solver)
