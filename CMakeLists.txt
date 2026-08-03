@@ -324,3 +324,11 @@ target_link_libraries(corpus_harness PRIVATE astap_image)
 add_executable(quad_batch_tests tests/quad_batch_tests.cpp)
 target_link_libraries(quad_batch_tests PRIVATE astap_solver)
 add_test(NAME quad_batch_tests COMMAND quad_batch_tests)
+
+# Reports itself skipped, and passes, when the machine has no star database to
+# build an index from.
+add_executable(index_file_tests tests/index_file_tests.cpp)
+target_link_libraries(index_file_tests PRIVATE astap_solver)
+target_compile_definitions(index_file_tests PRIVATE
+        ASTAP_TEST_TMP_DIR="${CMAKE_CURRENT_BINARY_DIR}")
+add_test(NAME index_file_tests COMMAND index_file_tests)

@@ -122,6 +122,13 @@ namespace astap {
   // The file records the tolerance it was binned with and the database it came
   // from. Loading refuses a file written by a different build, so a stale cache
   // fails loudly instead of producing quietly wrong matches.
+  //
+  // Every array starts on a 64 byte boundary, padded apart rather than packed
+  // end to end. That costs at most 63 bytes per array on a file of gigabytes and
+  // is what lets the file be memory mapped and the arrays used where they lie:
+  // packed, a tier holding an odd number of quads puts its d1/ra/dec arrays at a
+  // 4 byte offset, which a copying read does not care about and a `const double
+  // *` into a mapping does.
 
   struct QuadIndexFile {
     uint32_t version = 0;

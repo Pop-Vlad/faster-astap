@@ -272,8 +272,19 @@ namespace astap {
     // match: a file read with the wrong endianness or an older layout would not
     // fail, it would match against nonsense.
     const char kIndexMagic[8] = {'A', 'S', 'T', 'A', 'P', 'Q', 'I', 'X'};
-    constexpr uint32_t kIndexVersion = 2;
+    // 3: every array starts on a kAlign boundary, so the file can be mapped and
+    // the arrays used where they lie. Version 2 packed them end to end, which
+    // left d1, ra and dec at a 4 byte offset whenever a tier held an odd number
+    // of quads — readable through a copying read, not addressable as doubles.
+    constexpr uint32_t kIndexVersion = 3;
     constexpr uint32_t kByteOrderMark = 0x01020304u;
+
+    // 8 would be enough to make the doubles naturally aligned. A cache line
+    // costs at most 63 bytes per array on a file of gigabytes and keeps the
+    // start of one array off the last line of the one before it.
+    constexpr uint64_t kAlign = 64;
+
+    uint64_t align_up(uint64_t x) { return (x + kAlign - 1) / kAlign * kAlign; }
 
     template <typename T>
     void put(std::ostream &f, const T &v) {
@@ -311,6 +322,33 @@ namespace astap {
              4 * sizeof(double) + ntiers * sizeof(TierEntry);
     }
 
+    // Where one tier's four arrays sit, relative to the start of the file. The
+    // writer and the reader both derive them from the tier's own offset and quad
+    // count, so the two cannot come to disagree about the layout.
+    struct TierLayout {
+      uint64_t ratio, d1, ra, dec, end;
+    };
+
+    TierLayout tier_layout(uint64_t base, uint64_t nquads) {
+      TierLayout l;
+      l.ratio = base;
+      l.d1 = align_up(l.ratio + nquads * 5 * sizeof(float));
+      l.ra = align_up(l.d1 + nquads * sizeof(double));
+      l.dec = align_up(l.ra + nquads * sizeof(double));
+      l.end = align_up(l.dec + nquads * sizeof(double));
+      return l;
+    }
+
+    // Writes zeros up to `target`, keeping `pos` in step with the stream.
+    void pad_to(std::ostream &f, uint64_t &pos, uint64_t target) {
+      static const char zeros[kAlign] = {};
+      while (pos < target) {
+        const uint64_t n = std::min<uint64_t>(target - pos, kAlign);
+        f.write(zeros, static_cast<std::streamsize>(n));
+        pos += n;
+      }
+    }
+
     bool fail(std::string *error, const std::string &why) {
       if (error) *error = why;
       return false;
@@ -324,11 +362,11 @@ namespace astap {
 
     const QuadIndexSettings &s0 = tiers.front().settings();
     std::vector<TierEntry> entries(tiers.size());
-    uint64_t offset = header_bytes(tiers.size());
+    uint64_t offset = align_up(header_bytes(tiers.size()));
     for (size_t k = 0; k < tiers.size(); k++) {
       const uint64_t n = tiers[k].size();
       entries[k] = {tiers[k].settings().star_density, n, offset};
-      offset += n * (5 * sizeof(float) + 3 * sizeof(double));
+      offset = tier_layout(offset, n).end;
     }
 
     f.write(kIndexMagic, sizeof(kIndexMagic));
@@ -342,11 +380,23 @@ namespace astap {
     put(f, s0.radius_deg);
     for (const TierEntry &e : entries) put(f, e);
 
-    for (const QuadIndex &ix : tiers) {
+    uint64_t pos = header_bytes(tiers.size());
+    for (size_t k = 0; k < tiers.size(); k++) {
+      const QuadIndex &ix = tiers[k];
+      const TierLayout l = tier_layout(entries[k].offset, entries[k].nquads);
+      pad_to(f, pos, l.ratio);
       put_array(f, ix.ratio_);
+      pos += ix.ratio_.size() * sizeof(float);
+      pad_to(f, pos, l.d1);
       put_array(f, ix.d1_);
+      pos += ix.d1_.size() * sizeof(double);
+      pad_to(f, pos, l.ra);
       put_array(f, ix.ra_);
+      pos += ix.ra_.size() * sizeof(double);
+      pad_to(f, pos, l.dec);
       put_array(f, ix.dec_);
+      pos += ix.dec_.size() * sizeof(double);
+      pad_to(f, pos, l.end); // so the next tier, and the file, end aligned too
     }
     f.flush();
     return static_cast<bool>(f);
@@ -414,8 +464,7 @@ namespace astap {
       if (min_density > 0 && e.density < min_density) continue;
       if (max_density > 0 && e.density > max_density) continue;
 
-      f.seekg(static_cast<std::streamoff>(e.offset));
-      if (!f) return fail(error, path + " is truncated");
+      const TierLayout l = tier_layout(e.offset, e.nquads);
 
       QuadIndex ix;
       ix.settings_.star_density = e.density;
@@ -423,9 +472,15 @@ namespace astap {
       ix.settings_.centre_ra = info.centre_ra;
       ix.settings_.centre_dec = info.centre_dec;
       ix.settings_.radius_deg = info.radius_deg;
+      // Each array is sought to in turn rather than read end to end: they are
+      // padded apart so that a mapped file can address them in place.
+      f.seekg(static_cast<std::streamoff>(l.ratio));
       get_array(f, ix.ratio_, static_cast<size_t>(e.nquads) * 5);
+      f.seekg(static_cast<std::streamoff>(l.d1));
       get_array(f, ix.d1_, static_cast<size_t>(e.nquads));
+      f.seekg(static_cast<std::streamoff>(l.ra));
       get_array(f, ix.ra_, static_cast<size_t>(e.nquads));
+      f.seekg(static_cast<std::streamoff>(l.dec));
       get_array(f, ix.dec_, static_cast<size_t>(e.nquads));
       if (!f) return fail(error, path + " is truncated");
       ix.finalise();
