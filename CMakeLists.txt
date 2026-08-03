@@ -54,6 +54,11 @@ add_library(astap_solver
         src/star_database.cpp
         src/star_detection.cpp
         src/solver.cpp
+        # The per image pipeline of both solvers. It needs no image decoder —
+        # the caller supplies pixels — so it belongs to this module, and the
+        # file front ends that read and write around it live in astap_image.
+        src/solve_service.cpp
+        src/spiral_service.cpp
 )
 target_include_directories(astap_solver PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
 target_link_libraries(astap_solver PUBLIC Threads::Threads)
@@ -81,11 +86,11 @@ add_library(astap_image
         src/image/image_jpeg.cpp
         src/image/image_tiff.cpp
         src/image/image_raw.cpp
-        # Sits on top of both modules rather than inside either: it turns a file
-        # into a solution, so it needs the loader and the solver at once. It
-        # lives here because this is the library that already depends on both,
-        # and a third one holding a single translation unit would earn nothing.
-        src/solve_service.cpp
+        # The file front ends: read an image, hand it to the pipeline in
+        # astap_solver, write the .ini and .wcs. Here because this is the module
+        # that has the decoder, and the pipeline itself deliberately does not.
+        src/solve_service_files.cpp
+        src/spiral_service_files.cpp
 )
 target_include_directories(astap_image PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
 # For the shared types, astro_math and the thread pool. Nothing in the solver
@@ -325,6 +330,15 @@ target_link_libraries(corpus_harness PRIVATE astap_image)
 add_executable(quad_batch_tests tests/quad_batch_tests.cpp)
 target_link_libraries(quad_batch_tests PRIVATE astap_solver)
 add_test(NAME quad_batch_tests COMMAND quad_batch_tests)
+
+# Solving an array has to give the same answer as solving the file it came from.
+# Reports itself skipped, and passes, without a star database or a corpus image.
+add_executable(service_api_tests tests/service_api_tests.cpp)
+target_link_libraries(service_api_tests PRIVATE astap_image)
+target_compile_definitions(service_api_tests PRIVATE
+        ASTAP_TEST_CORPUS_DIR="${CMAKE_CURRENT_SOURCE_DIR}/corpus"
+        ASTAP_TEST_TMP_DIR="${CMAKE_CURRENT_BINARY_DIR}")
+add_test(NAME service_api_tests COMMAND service_api_tests)
 
 # Reports itself skipped, and passes, when the machine has no star database to
 # build an index from.

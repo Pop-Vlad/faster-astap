@@ -84,6 +84,16 @@ namespace astap {
     bool read_star(double telescope_ra, double telescope_dec, double field_diameter, double &ra,
                    double &dec, double &mag, double &b_v);
 
+    // Maps every area of the selected database and touches the part of each a
+    // solve would read, so that the first solve does not stop to fault them in.
+    // Returns the number of areas that could be opened.
+    //
+    // Costs the time to touch the database once and nothing in memory that is
+    // not reclaimable: the pages are file backed, so the system can drop them
+    // again under pressure. A no-op for the wide field database, which is read
+    // into memory whole in any case.
+    int warm();
+
     // Load the wide field (.001) database: an int32 star count followed by
     // count*3 floats holding magnitude, ra and dec.
     bool read_stars_wide_field(const std::string &database_path);

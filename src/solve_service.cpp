@@ -316,14 +316,26 @@ namespace astap {
     return d;
   }
 
-  SolveOutcome SolveService::solve(const SolveRequest &r, const LogFn &progress) {
+  Header header_for_image(const ImageArray &img) {
+    Header head;
+    head.width = img.width();
+    head.height = img.height();
+    head.naxis = img.colours() > 1 ? 3 : 2;
+    head.naxis3 = img.colours();
+    return head;
+  }
+
+  SolveOutcome SolveService::solve_image(const ImageArray &img, Header &head, const SolveParams &r,
+                                         const LogFn &progress) {
     SolveOutcome o;
     const auto t_start = Clock::now();
     auto say = [&](const std::string &m) {
       o.messages.push_back(m);
       if (progress) progress(m);
     };
-    const std::string out_base = r.output_base.empty() ? r.filename : r.output_base;
+    // Named so the messages read the same whether the pixels came from a file
+    // or from a caller who never had one.
+    const std::string what = r.label.empty() ? std::string("the image") : r.label;
     auto finish = [&](bool solved, int level) {
       o.solved = solved;
       o.errorlevel = level;
@@ -331,16 +343,11 @@ namespace astap {
       return o;
     };
 
-    Header head;
-    ImageArray img;
-    const ImageLoadResult lr = load_image(r.filename, head, img);
-    if (!lr.ok) {
-      say(lr.error);
-      write_ini(change_file_ext(out_base, ".ini"), false, head, r.cmdline, kErrImageRead, "");
-      o.head = head;
-      return finish(false, kErrImageRead);
+    // A caller with pixels and no header still gets the dimensions right.
+    if (head.width <= 0 || head.height <= 0) {
+      head.width = img.width();
+      head.height = img.height();
     }
-    if (!lr.warning.empty()) say(lr.warning);
 
     ImageArray small;
     const int bin = bin_mono(img, head.width, head.height, r.downsample, small);
@@ -362,8 +369,7 @@ namespace astap {
     find_stars(small, bhead, hfd_min, r.max_stars, stars, mean_hfd, progress ? progress : LogFn());
     o.stars = static_cast<int>(stars.count());
     if (stars.count() < 4) {
-      say("Not enough stars detected in " + r.filename);
-      write_ini(change_file_ext(out_base, ".ini"), false, head, r.cmdline, kErrNotEnoughStars, "");
+      say("Not enough stars detected in " + what);
       o.head = head;
       return finish(false, kErrNotEnoughStars);
     }
@@ -385,9 +391,8 @@ namespace astap {
     o.solve_seconds = secs(s0, Clock::now());
 
     if (!res.solved) {
-      say("No solution for " + r.filename + " (" + res.reason + ", " +
+      say("No solution for " + what + " (" + res.reason + ", " +
           std::to_string(res.nr_matches) + " candidate quads)");
-      write_ini(change_file_ext(out_base, ".ini"), false, head, r.cmdline, kErrNone, "");
       o.head = head;
       return finish(false, kErrNoSolution);
     }
@@ -444,21 +449,6 @@ namespace astap {
                    std::to_string(res.stars_detected) + " stars"
              : "") +
         (res.refined ? ", refined" : "") + (o.sip.valid ? ", SIP" : "") + ").");
-
-    write_ini(change_file_ext(out_base, ".ini"), true, head, r.cmdline, kErrNone, "");
-
-    if (r.write_wcs) {
-      const std::string comment =
-          "Solved in " + float_to_str(o.solve_seconds, 3) + " sec by the index method.";
-      update_solution_cards(head.cards, head, o.sip, true, comment);
-      remove_key(head.cards, "NAXIS1  =");
-      remove_key(head.cards, "NAXIS2  =");
-      update_integer(head.cards, "NAXIS   =",
-                     " / Minimal header                                 ", 0);
-      update_integer(head.cards, "BITPIX  =",
-                     " /                                                ", 8);
-      write_fits_header_file(change_file_ext(out_base, ".wcs"), head.cards);
-    }
 
     return finish(true, kErrNone);
   }

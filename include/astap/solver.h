@@ -56,6 +56,16 @@ namespace astap {
     explicit Solver(SolverSettings settings) : settings_(std::move(settings)) {
     }
 
+    // Replaces the settings between solves. Worth having because the per image
+    // ones — the field size, the start position, the search radius — change from
+    // frame to frame while the expensive part of this object does not: the
+    // workers keep their database handles and their tile caches, which a fresh
+    // Solver would have to build again. Every solve re-points the workers at the
+    // database named here, so changing that between calls is safe too.
+    void configure(SolverSettings settings) { settings_ = std::move(settings); }
+
+    const SolverSettings &settings() const { return settings_; }
+
     // Called for every progress message. Defaults to no output.
     void set_log(LogFn log) { log_ = std::move(log); }
 

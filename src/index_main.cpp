@@ -244,13 +244,13 @@ int main(int argc, char **argv) {
     astap::SolveRequest req;
     req.filename = filename;
     req.output_base = has("o") ? val("o") : "";
-    req.fov = has("fov") ? std::atof(val("fov").c_str()) : 0;
-    req.max_stars = has("s") ? std::atoi(val("s").c_str()) : 500;
-    req.min_star_size = has("m") ? std::atof(val("m").c_str()) : 1.5;
-    req.downsample = has("z") ? std::atoi(val("z").c_str()) : 0;
+    req.params.fov = has("fov") ? std::atof(val("fov").c_str()) : 0;
+    req.params.max_stars = has("s") ? std::atoi(val("s").c_str()) : 500;
+    req.params.min_star_size = has("m") ? std::atof(val("m").c_str()) : 1.5;
+    req.params.downsample = has("z") ? std::atoi(val("z").c_str()) : 0;
     req.write_wcs = has("wcs");
-    req.want_sip = has("sip");
-    req.refine = !has("norefine");
+    req.params.want_sip = has("sip");
+    req.params.refine = !has("norefine");
     req.cmdline = cmdline;
 
     // With -progress the service reports as it goes; without it there is nothing

@@ -525,6 +525,30 @@ namespace astap {
     return true;
   }
 
+  int StarDatabase::warm() {
+    if (database_type_ == kDatabaseWideField) return 0;
+
+    // What one request ever consumes: records run bright to faint and the read
+    // stops as soon as it has enough stars, so the tail of a file is never
+    // reached. Touching a page of every 4096 is what pulls it in; reading the
+    // whole file would cost several times as much for nothing.
+    constexpr size_t kWanted = 5 * 6 * 4 * 1024; // as much as read_star can use
+    constexpr size_t kPage = 4096;
+
+    int opened = 0;
+    volatile uint8_t sink = 0;
+    for (int area = 1; area <= database_type_; area++) {
+      if (!open_area(0, area)) continue;
+      opened++;
+      const size_t n = std::min(kWanted, records_size_);
+      for (size_t i = 0; i < n; i += kPage) sink = static_cast<uint8_t>(sink + records_[i]);
+    }
+    (void) sink;
+    close();
+    old_area_ = 9999999;
+    return opened;
+  }
+
   bool StarDatabase::read_stars_wide_field(const std::string &database_path) {
     if (wide_database_ == name_database_ && !wide_field_stars_.empty()) return true;
 

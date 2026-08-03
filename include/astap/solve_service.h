@@ -59,6 +59,15 @@ namespace astap {
   // '\' is left as it is.
   std::string with_separator(std::string dir);
 
+  // A header for an image that came from memory rather than from a file: the
+  // dimensions the pipeline needs, and no FITS cards, so a .wcs written from it
+  // carries the solution and nothing else.
+  //
+  // The pixel values are expected on the scale the detector produced, the same
+  // 0..65535 range the histogram works in. An image normalised to 0..1 has no
+  // stars as far as the detection is concerned.
+  Header header_for_image(const ImageArray &img);
+
   struct SolveServiceSettings {
     // Directory holding the .1476 / .290 files. Empty searches
     // default_database_directories(), which is beside the executable and then
@@ -80,10 +89,10 @@ namespace astap {
     bool rebuild = false;   // build even when a usable cache exists
   };
 
-  struct SolveRequest {
-    std::string filename;
-    std::string output_base;  // empty names the outputs after `filename`
-
+  // What solving one image needs, whatever the pixels arrived in. Everything
+  // here is a property of the image or of how hard to look; nothing in it names
+  // a file. `SolveRequest` below is this plus a file to read and files to write.
+  struct SolveParams {
     // Field diameter in degrees, 0 when unknown. It orders the tier sweep and
     // gives the minimum star size a plate scale to mean something against; it
     // never restricts which tiers are tried, so a wrong value costs time rather
@@ -93,9 +102,21 @@ namespace astap {
     double min_star_size = 1.5;  // arcsec, applied only when fov is known
     int downsample = 0;          // 0 selects the factor automatically
 
-    bool write_wcs = false;
     bool want_sip = false;
     bool refine = true;  // the second pass against the database
+
+    // What to call this image in the messages. The file name when it came from
+    // one; a frame number or nothing at all when it did not.
+    std::string label;
+  };
+
+  struct SolveRequest {
+    std::string filename;
+    std::string output_base;  // empty names the outputs after `filename`
+
+    SolveParams params;
+
+    bool write_wcs = false;
 
     // Recorded verbatim in the .ini, as astap_cli records its own command line.
     std::string cmdline;
@@ -140,10 +161,24 @@ namespace astap {
 
     bool ready() const { return !tiers_.empty(); }
 
-    // Solves one image. Writes the .ini always and the .wcs on request, exactly
-    // as the command line front end does, and reports what happened. `progress`
-    // receives the per step detail that -progress prints; the summary lines land
-    // in `SolveOutcome::messages` either way.
+    // Solves an image already in memory, and touches no files at all.
+    //
+    // This is the whole per image pipeline — binning, star detection, the tier
+    // sweep, the second pass, the rescale back to original pixels. `solve`
+    // below is exactly this with a file read in front and the .ini and .wcs
+    // written after, which is what keeps the two agreeing.
+    //
+    // `head` supplies the image dimensions and receives the solution. A caller
+    // holding pixels and nothing else can get one from `header_for_image`; a
+    // caller that read a file passes the header that came with it, so the FITS
+    // cards travel into the .wcs.
+    SolveOutcome solve_image(const ImageArray &img, Header &head, const SolveParams &p,
+                             const LogFn &progress = nullptr);
+
+    // Solves one image file. Writes the .ini always and the .wcs on request,
+    // exactly as the command line front end does, and reports what happened.
+    // `progress` receives the per step detail that -progress prints; the summary
+    // lines land in `SolveOutcome::messages` either way.
     SolveOutcome solve(const SolveRequest &r, const LogFn &progress = nullptr);
 
     // --- what is resident, for a status report --------------------------------
