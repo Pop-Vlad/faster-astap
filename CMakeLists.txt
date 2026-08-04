@@ -343,6 +343,18 @@ if (ASTAP_PYTHON)
         FetchContent_MakeAvailable(pybind11)
     endif ()
 
+    # The extension is a shared object linking two static libraries, and on ELF
+    # platforms everything that goes into one has to be position independent.
+    # Without this the link fails on a thread local in find_many_quads, whose
+    # relocation cannot be resolved in a shared object. macOS and Windows do not
+    # need telling — macOS compiles position independent by default and Windows
+    # has no equivalent — so Linux is where this shows up.
+    #
+    # Set here rather than globally so that a build of the two command line
+    # solvers alone is unchanged: position independence costs a little indirection
+    # on every global, and the executables have no use for it.
+    set_property(TARGET astap_solver astap_image PROPERTY POSITION_INDEPENDENT_CODE ON)
+
     pybind11_add_module(_core python/src/module.cpp)
 
     # The version belongs to pyproject.toml and is passed through from there, so
