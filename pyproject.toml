@@ -76,6 +76,25 @@ ASTAP_NINA_INTEGRATION = "OFF"
 # decides the runtime here, so the wheel takes it dynamically like everything
 # else in the process.
 ASTAP_STATIC_RUNTIME = "OFF"
+# The optional image decoders are left out of the wheel deliberately, all of
+# them, on every platform.
+#
+# Left to auto-detection CMake links whatever the build machine happens to have,
+# which is not the same thing on each: the macOS runners have Homebrew's libpng,
+# libjpeg and libtiff, the manylinux images have zlib, and the Windows ones have
+# none. That would ship wheels whose supported_image_extensions() differs by
+# platform — a file that opens on a Mac and not on Windows — and it would vendor
+# those libraries into the wheel, which is what delocate refused: Homebrew builds
+# for the runner's own macOS, far newer than a wheel may target.
+#
+# FITS, Rice .fz, Netpbm and BMP need nothing beyond the compiler and are the
+# formats this is for. Anything else is a couple of lines of Pillow or astropy
+# away, and solve() takes the array.
+ASTAP_ZLIB = "OFF"
+ASTAP_PNG = "OFF"
+ASTAP_JPEG = "OFF"
+ASTAP_TIFF = "OFF"
+ASTAP_LIBRAW = "OFF"
 
 [tool.cibuildwheel]
 # Here rather than as CIBW_* environment variables in the workflow, so that the
@@ -91,6 +110,14 @@ skip = ["pp*", "*-win32", "*_i686", "*-musllinux_*"]
 # ours to ship, so most of the suite reports itself skipped here.
 test-requires = "pytest"
 test-command = "python -c \"import faster_astap as fa; print(fa.__version__, fa.supported_image_extensions())\" && python -m pytest {project}/python/tests -q"
+
+[tool.cibuildwheel.macos]
+# Both architectures from the one arm64 runner. macos-13 was the last free Intel
+# runner and has been retired — Intel is now only on the paid -large labels — so
+# the x86_64 wheel is cross compiled here instead. cibuildwheel skips the test
+# step for a wheel the runner cannot execute, so the Intel build is compiled and
+# not run; that is the trade for still shipping one at all.
+archs = ["arm64", "x86_64"]
 
 [tool.cibuildwheel.linux]
 # GCC 12: comfortable with C++17, and new enough for std::filesystem without the

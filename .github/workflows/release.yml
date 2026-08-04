@@ -40,17 +40,16 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, ubuntu-24.04-arm, macos-13, macos-latest, windows-latest]
+        os: [ubuntu-latest, ubuntu-24.04-arm, macos-latest, windows-latest]
     steps:
       - uses: actions/checkout@v4
 
-      # std::filesystem needs macOS 10.15, and the default for the Intel builds
-      # is older than that. Only for macos-13: macos-latest is arm64, where the
-      # floor is 11.0 already and cibuildwheel sets it itself. The two runners
-      # each produce their own wheel rather than one universal2 that would
-      # double the download for everybody.
+      # std::filesystem needs macOS 10.15, and the default for an x86_64 build is
+      # older than that. Applied to the whole macOS job because both architectures
+      # are now built on this one runner; the arm64 half is raised to its own
+      # floor of 11.0 automatically, so naming 10.15 here only affects Intel.
       - name: Set the macOS deployment target
-        if: matrix.os == 'macos-13'
+        if: runner.os == 'macOS'
         run: echo "MACOSX_DEPLOYMENT_TARGET=10.15" >> "$GITHUB_ENV"
 
       # Everything it builds and how it tests is in [tool.cibuildwheel] in
