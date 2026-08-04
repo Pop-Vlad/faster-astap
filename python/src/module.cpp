@@ -141,7 +141,8 @@ namespace {
 PYBIND11_MODULE(_core, m) {
   m.doc() = "Bindings for the faster-astap plate solvers.";
 
-  m.attr("__version__") = "0.1.0";
+  // Comes from pyproject.toml by way of CMake, so there is one place to change.
+  m.attr("__version__") = ASTAP_VERSION;
 
   // Stops the solver's worker threads while the interpreter is still up and this
   // module is still loaded. Both conditions matter: joining them later, as the

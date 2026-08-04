@@ -237,12 +237,19 @@ target_link_libraries(astap_index_solve PRIVATE astap_image)
 # solvers. On Windows they go in the root, so the directory can be zipped and
 # the DLLs collected below sit next to the .exe that loads them; elsewhere they
 # go in bin/, as a prefix is expected to be laid out.
-if (WIN32)
-    set(ASTAP_RUNTIME_DEST .)
-else ()
-    set(ASTAP_RUNTIME_DEST bin)
+#
+# None of it belongs in a Python wheel, whose install prefix is the package
+# directory: the two command line solvers would be installed into it, and the
+# dependency walk below would go looking for executables a wheel build never
+# built. SKBUILD is set by scikit-build-core, and by nothing else.
+if (NOT SKBUILD)
+    if (WIN32)
+        set(ASTAP_RUNTIME_DEST .)
+    else ()
+        set(ASTAP_RUNTIME_DEST bin)
+    endif ()
+    install(TARGETS astap_solve astap_index_solve RUNTIME DESTINATION ${ASTAP_RUNTIME_DEST})
 endif ()
-install(TARGETS astap_solve astap_index_solve RUNTIME DESTINATION ${ASTAP_RUNTIME_DEST})
 
 # --- the N.I.N.A. integration ------------------------------------------------
 # A module of its own, in nina-plugin/: a resident server that keeps the index in
@@ -264,7 +271,7 @@ endif ()
 # Only the third-party DLLs are collected: everything shipped with Windows is
 # excluded, and so is anything the resolver could not find, which is reported
 # rather than silently dropped.
-if (WIN32 AND NOT CMAKE_VERSION VERSION_LESS 3.16)
+if (WIN32 AND NOT SKBUILD AND NOT CMAKE_VERSION VERSION_LESS 3.16)
     # The DLLs sit beside the compiler, in the environment's bin directory.
     get_filename_component(ASTAP_TOOLCHAIN_BIN "${CMAKE_CXX_COMPILER}" DIRECTORY)
     install(CODE "set(ASTAP_DLL_DIRS [[${ASTAP_TOOLCHAIN_BIN}]])")
@@ -337,6 +344,17 @@ if (ASTAP_PYTHON)
     endif ()
 
     pybind11_add_module(_core python/src/module.cpp)
+
+    # The version belongs to pyproject.toml and is passed through from there, so
+    # that _core.__version__ and the distribution metadata cannot disagree.
+    # SKBUILD_PROJECT_VERSION is set by scikit-build-core; a plain CMake build
+    # has no project version to take, and says so rather than inventing one.
+    if (SKBUILD_PROJECT_VERSION)
+        target_compile_definitions(_core PRIVATE ASTAP_VERSION="${SKBUILD_PROJECT_VERSION}")
+    else ()
+        target_compile_definitions(_core PRIVATE ASTAP_VERSION="0+unknown")
+    endif ()
+
     if (ASTAP_PYTHON_IMAGE_IO)
         target_link_libraries(_core PRIVATE astap_image)
         target_compile_definitions(_core PRIVATE ASTAP_PYTHON_IMAGE_IO)

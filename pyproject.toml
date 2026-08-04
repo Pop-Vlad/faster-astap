@@ -1,5 +1,6 @@
 [build-system]
-requires = ["scikit-build-core>=0.9", "pybind11>=2.12"]
+# PEP 639 license metadata needs a recent scikit-build-core.
+requires = ["scikit-build-core>=0.10", "pybind11>=2.12"]
 build-backend = "scikit_build_core.build"
 
 [project]
@@ -8,13 +9,17 @@ version = "0.1.0"
 description = "Fast astrometric plate solving: ASTAP's algorithm in C++, plus a whole-sky index solver"
 readme = "README.md"
 requires-python = ">=3.9"
-license = { text = "MPL-2.0" }
+# SPDX expression rather than the old free text plus classifier pair. The
+# licence file travels with the wheel and the sdist because MPL-2.0 requires the
+# notice to stay with the code — this is a port of Han Kleijn's ASTAP algorithm,
+# published under the same licence, not a work that could be relicensed.
+license = "MPL-2.0"
+license-files = ["LICENSE"]
 authors = [{ name = "Vlad Pop" }]
 keywords = ["astronomy", "astrometry", "plate solving", "astap", "wcs", "fits"]
 classifiers = [
     "Development Status :: 4 - Beta",
     "Intended Audience :: Science/Research",
-    "License :: OSI Approved :: Mozilla Public License 2.0 (MPL 2.0)",
     "Programming Language :: C++",
     "Programming Language :: Python :: 3",
     "Topic :: Scientific/Engineering :: Astronomy",
@@ -26,8 +31,9 @@ wcs = ["astropy>=5.0"]
 test = ["pytest>=7"]
 
 [project.urls]
-Homepage = "https://github.com/vladpop/faster-astap"
-Source = "https://github.com/vladpop/faster-astap"
+Homepage = "https://github.com/Pop-Vlad/faster-astap"
+Source = "https://github.com/Pop-Vlad/faster-astap"
+Issues = "https://github.com/Pop-Vlad/faster-astap/issues"
 
 [tool.scikit-build]
 # The package is laid out under python/, so that the C++ sources at the top of
@@ -35,7 +41,21 @@ Source = "https://github.com/vladpop/faster-astap"
 wheel.packages = ["python/faster_astap"]
 cmake.version = ">=3.15"
 build-dir = "build/{wheel_tag}"
-sdist.exclude = ["corpus", "cmake-build-*", "build", "dist", "nina-plugin/plugin"]
+# Only the extension. Left to itself CMake would also build the two command line
+# solvers, the benchmarks and the test binaries, none of which go in the wheel.
+build.targets = ["_core"]
+# The corpus is hundreds of megabytes of survey cutouts that anyone can refetch
+# with tools/fetch_skyview_corpus.py, and the rest is build output. Everything
+# CMake needs to configure — CMakeLists.txt, include/, src/, tests/, python/ —
+# stays in, because an sdist that cannot build is not a source distribution.
+sdist.exclude = [
+    "corpus",
+    "cmake-build-*",
+    "build",
+    "dist",
+    "wheelhouse",
+    "nina-plugin/plugin",
+]
 
 [tool.scikit-build.cmake.define]
 ASTAP_PYTHON = "ON"

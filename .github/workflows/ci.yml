@@ -1,0 +1,116 @@
+# Builds and tests on the three platforms the wheels target.
+#
+# This is the job that matters most for this project: the memory mapping in
+# src/mapped_file.cpp has a POSIX half and a Windows half, and a developer only
+# ever compiles one of them. The same goes for the star database reader built on
+# it. Everything else here is ordinary, but that part is only ever proven by CI.
+#
+# Solving is barely exercised: it needs a star database, which is gigabytes and
+# is not ours to redistribute. The C++ tests and the Python tests both report
+# themselves skipped without one, so a green run here means "builds, imports and
+# behaves sensibly with no database", not "solves correctly". Real solve
+# verification is the corpus harness, run locally.
+
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  cxx:
+    name: C++ (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    steps:
+      - uses: actions/checkout@v4
+
+      # std::filesystem, which this port uses throughout, needs 10.15. The
+      # default target is older and would not link.
+      - name: Set the macOS deployment target
+        if: runner.os == 'macOS'
+        run: echo "MACOSX_DEPLOYMENT_TARGET=10.15" >> "$GITHUB_ENV"
+
+      # Without the image libraries, so the build is the same everywhere and
+      # exercises the formats that need no dependency at all. The optional
+      # decoders are a packaging concern, not a correctness one.
+      - name: Configure
+        run: >
+          cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
+          -DASTAP_NINA_INTEGRATION=OFF
+          -DASTAP_PNG=OFF -DASTAP_JPEG=OFF -DASTAP_TIFF=OFF -DASTAP_LIBRAW=OFF -DASTAP_ZLIB=OFF
+
+      - name: Build
+        run: cmake --build build --config Release -j 4
+
+      - name: Test
+        run: ctest --test-dir build --build-config Release --output-on-failure
+
+  python:
+    name: Python ${{ matrix.python }} (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+        python: ["3.9", "3.13"]  # the ends of the supported range
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+
+      - name: Set the macOS deployment target
+        if: runner.os == 'macOS'
+        run: echo "MACOSX_DEPLOYMENT_TARGET=10.15" >> "$GITHUB_ENV"
+
+      # Installed rather than built in place, so that what is tested is what a
+      # user would get.
+      - name: Install
+        run: python -m pip install --verbose .[test]
+
+      - name: Test
+        run: python -m pytest python/tests -v
+
+      # The tests above skip nearly everything without a star database, so this
+      # checks the one thing they cannot: that the module loads, reports itself,
+      # and shuts its worker threads down cleanly. A process that hangs here is
+      # the loader-lock deadlock coming back.
+      - name: Import and exit cleanly
+        run: python -c "import faster_astap as fa; print(fa.__version__, fa.supported_image_extensions()); print(fa.find_databases())"
+
+  sdist:
+    name: sdist builds and installs
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Build the sdist
+        run: |
+          python -m pip install build
+          python -m build --sdist --outdir wheelhouse
+
+      # The check that catches an sdist missing a file CMake needs, which is the
+      # usual way a source distribution turns out to be unbuildable.
+      - name: Install from the sdist alone
+        run: |
+          python -m pip install wheelhouse/*.tar.gz
+          python -c "import faster_astap; print(faster_astap.__version__)"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: sdist
+          path: wheelhouse/*.tar.gz
