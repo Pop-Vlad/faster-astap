@@ -21,6 +21,7 @@
 #include <pybind11/pybind11.h>
 #include <pybind11/stl.h>
 
+#include "astap/parallel.h"
 #include "astap/solve_service.h"
 #include "astap/spiral_service.h"
 #include "astap/star_database.h"
@@ -141,6 +142,14 @@ PYBIND11_MODULE(_core, m) {
   m.doc() = "Bindings for the faster-astap plate solvers.";
 
   m.attr("__version__") = "0.1.0";
+
+  // Stops the solver's worker threads while the interpreter is still up and this
+  // module is still loaded. Both conditions matter: joining them later, as the
+  // extension is unloaded, would happen under the Windows loader lock, where a
+  // join can never complete. See shutdown_thread_pool().
+  m.def("_shutdown", []() { shutdown_thread_pool(); },
+        "Stops the worker threads. Registered with atexit; not normally called.");
+  py::module_::import("atexit").attr("register")(m.attr("_shutdown"));
 
   m.def("default_database_directories", &default_database_directories,
         "Where a star database is looked for when none is named, in order.");

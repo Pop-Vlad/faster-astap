@@ -38,4 +38,19 @@ namespace astap {
 
   // Number of chunks parallel_ranges would create for a range of `count` items.
   unsigned range_chunks(size_t count);
+
+  // Stops the worker threads and waits for them. The next parallel region starts
+  // a fresh set, so this costs nothing but the restart.
+  //
+  // Nothing has to call it: the pool is deliberately never destroyed, so a
+  // program that simply exits is fine. It exists for the one case that is not —
+  // a shared library that wants its threads gone while it is still loaded. The
+  // Python extension registers it with atexit, because letting the pool be torn
+  // down as the module unloads would mean joining threads under the Windows
+  // loader lock, and that deadlocks: the exiting thread needs the same lock to
+  // run its own detach notification, so the join never returns.
+  //
+  // Must not be called from inside a parallel region, and the caller has to
+  // ensure no other thread is in one.
+  void shutdown_thread_pool();
 } // namespace astap

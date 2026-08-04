@@ -42,6 +42,13 @@ ASTAP_PYTHON = "ON"
 # The two command line solvers and the N.I.N.A. server are not part of the
 # wheel, and building them would only slow it down.
 ASTAP_NINA_INTEGRATION = "OFF"
+# That option exists so the shipped .exe files carry their own runtime. An
+# extension module must not: it is loaded into a process that already has one,
+# and a second static copy of the C runtime beside python3xx.dll means two heaps
+# and two sets of file descriptors in the same process. The interpreter is what
+# decides the runtime here, so the wheel takes it dynamically like everything
+# else in the process.
+ASTAP_STATIC_RUNTIME = "OFF"
 
 [tool.pytest.ini_options]
 testpaths = ["python/tests"]

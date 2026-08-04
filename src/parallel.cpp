@@ -71,8 +71,34 @@ namespace astap {
     class Pool {
     public:
       static Pool &instance() {
-        static Pool p;
-        return p;
+        // Deliberately leaked, so that no destructor for it ever runs.
+        //
+        // Joining the workers from a static destructor is fine in an executable
+        // and is a deadlock in a shared library: static destructors run as the
+        // library is unloaded, holding the loader lock, and a thread cannot be
+        // joined from there because the exiting thread needs that same lock to
+        // run its own detach notification. The join never returns and the
+        // process cannot even be killed. Outliving the process sidesteps the
+        // question — the workers sit on a condition variable and the system
+        // reclaims them — and shutdown_thread_pool() is the tidy path for a
+        // caller that can run it while the library is still loaded.
+        static Pool *p = new Pool();
+        return *p;
+      }
+
+      // Stops the workers and joins them. Safe to call more than once, and a
+      // later parallel region simply starts a new set.
+      void shutdown() {
+        {
+          std::lock_guard<std::mutex> lk(m_);
+          stop_ = true;
+        }
+        cv_work_.notify_all();
+        for (std::thread &t : pool_)
+          if (t.joinable()) t.join();
+        pool_.clear();
+        workers_ = 0;
+        stop_ = false;
       }
 
       unsigned size() const { return workers_ + 1; } // workers plus the calling thread
@@ -115,15 +141,6 @@ namespace astap {
         cv_done_.wait(lk, [this] { return done_ >= chunks_ - 1; });
         busy_ = false;
         body_ = nullptr;
-      }
-
-      ~Pool() {
-        {
-          std::lock_guard<std::mutex> lk(m_);
-          stop_ = true;
-            }
-        cv_work_.notify_all();
-        for (std::thread &t: pool_) t.join();
       }
 
     private:
@@ -171,6 +188,8 @@ namespace astap {
   } // namespace
 
   void set_thread_count(unsigned n) { g_threads = n; }
+
+  void shutdown_thread_pool() { Pool::instance().shutdown(); }
 
   unsigned thread_count() {
     if (g_threads != 0) return g_threads;
