@@ -267,8 +267,22 @@ namespace {
     // Quantised with subtractive dithering. The reference is the same image
     // decoded by astropy, so this compares against CFITSIO's own arithmetic
     // including the random table.
-    check_same(data_dir() + "rice_dither.fz", data_dir() + "rice_dither_ref.fits", 0.001,
-               "Rice .fz, dithered quantisation vs reference decode");
+    //
+    // This file has GZIP fallback tiles in it too, so like the one above it can
+    // only be compared in full when the build has zlib. Without it those tiles
+    // are skipped and the comparison would fail on their contents rather than
+    // on the dithering it is meant to be testing.
+    {
+      Header head;
+      ImageArray img;
+      const std::string file = data_dir() + "rice_dither.fz";
+      const ImageLoadResult r = load_image(file, head, img);
+      if (r.ok && r.warning.find("zlib") != std::string::npos)
+        std::printf("skip: %-46s built without zlib\n", "Rice .fz, dithered quantisation");
+      else
+        check_same(file, data_dir() + "rice_dither_ref.fits", 0.001,
+                   "Rice .fz, dithered quantisation vs reference decode");
+    }
   }
 
   void test_optional_formats() {
