@@ -5,7 +5,14 @@ build-backend = "scikit_build_core.build"
 
 [project]
 name = "faster-astap"
-version = "0.1.0"
+# One version for the whole repository, continuing the v0.1.0 to v0.3.0 tags the
+# C++ solvers were released under: the package and the solvers are one piece of
+# work and a second numbering for the same commit would only confuse.
+#
+# The .devN suffix is for proving the release pipeline out on TestPyPI, since no
+# index ever lets a version be uploaded twice. Dev releases sort before the real
+# one, so 0.4.0 itself stays free. Drop the suffix and tag v0.4.0 to release.
+version = "0.4.0.dev1"
 description = "Fast astrometric plate solving: ASTAP's algorithm in C++, plus a whole-sky index solver"
 readme = "README.md"
 requires-python = ">=3.9"
@@ -69,6 +76,27 @@ ASTAP_NINA_INTEGRATION = "OFF"
 # decides the runtime here, so the wheel takes it dynamically like everything
 # else in the process.
 ASTAP_STATIC_RUNTIME = "OFF"
+
+[tool.cibuildwheel]
+# Here rather than as CIBW_* environment variables in the workflow, so that the
+# build a maintainer runs locally with `cibuildwheel` is the one CI runs, and so
+# an upgrade of the action cannot silently change what is built.
+#
+# 32 bit is not worth supporting for a solver that maps multi-gigabyte index
+# files, and musl and PyPy cost build time for very few users of this.
+skip = ["pp*", "*-win32", "*_i686", "*-musllinux_*"]
+
+# Proves the wheel imports on a machine with none of the build tools on it. It
+# cannot prove solving: that needs a star database, which is gigabytes and not
+# ours to ship, so most of the suite reports itself skipped here.
+test-requires = "pytest"
+test-command = "python -c \"import faster_astap as fa; print(fa.__version__, fa.supported_image_extensions())\" && python -m pytest {project}/python/tests -q"
+
+[tool.cibuildwheel.linux]
+# GCC 12: comfortable with C++17, and new enough for std::filesystem without the
+# separate library the older images want.
+manylinux-x86_64-image = "manylinux_2_28"
+manylinux-aarch64-image = "manylinux_2_28"
 
 [tool.pytest.ini_options]
 testpaths = ["python/tests"]

@@ -37,26 +37,18 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - uses: pypa/cibuildwheel@v2.21
-        env:
-          # 32 bit is not worth supporting for a solver that maps multi-gigabyte
-          # index files, and musl and PyPy add build time for very few users.
-          CIBW_SKIP: "pp* *-win32 *_i686 *-musllinux_*"
-          # GCC 12: comfortable with C++17, and new enough for std::filesystem
-          # without the separate library the older images need.
-          CIBW_MANYLINUX_X86_64_IMAGE: manylinux_2_28
-          CIBW_MANYLINUX_AARCH64_IMAGE: manylinux_2_28
-          # std::filesystem needs 10.15. macos-13 builds x86_64, macos-latest
-          # builds arm64, so each runner produces its own wheel rather than one
-          # universal2 that doubles the size for everybody.
-          MACOSX_DEPLOYMENT_TARGET: "10.15"
-          # Proves the wheel imports on a clean machine with none of the build
-          # tools present. It cannot prove solving: that needs a star database,
-          # which is gigabytes and not ours to ship.
-          CIBW_TEST_REQUIRES: pytest
-          CIBW_TEST_COMMAND: >
-            python -c "import faster_astap as fa; print(fa.__version__, fa.supported_image_extensions())" &&
-            python -m pytest {project}/python/tests -q
+      # std::filesystem needs macOS 10.15, and the default for the Intel builds
+      # is older than that. Only for macos-13: macos-latest is arm64, where the
+      # floor is 11.0 already and cibuildwheel sets it itself. The two runners
+      # each produce their own wheel rather than one universal2 that would
+      # double the download for everybody.
+      - name: Set the macOS deployment target
+        if: matrix.os == 'macos-13'
+        run: echo "MACOSX_DEPLOYMENT_TARGET=10.15" >> "$GITHUB_ENV"
+
+      # Everything it builds and how it tests is in [tool.cibuildwheel] in
+      # pyproject.toml, so this stays a plain invocation.
+      - uses: pypa/cibuildwheel@v4
 
       - uses: actions/upload-artifact@v4
         with:
@@ -109,4 +101,21 @@ jobs:
         with:
           path: dist
           merge-multiple: true
+
+      # The tag is what a reader will trust and the version inside the wheel is
+      # what PyPI will record, so the two have to agree. Checked against the
+      # built filename rather than against pyproject.toml, because that is what
+      # actually gets uploaded. Worth a step of its own: an upload can never be
+      # replaced or taken back, so a version published under the wrong tag is
+      # permanent.
+      - name: The tag and the built version must agree
+        run: |
+          tag="${GITHUB_REF_NAME#v}"
+          built=$(ls dist/*.whl | head -1 | sed -E 's|.*/[^-]+-([^-]+)-.*|\1|')
+          echo "tag=$tag  built=$built"
+          if [ "$tag" != "$built" ]; then
+            echo "::error::tag v$tag does not match the built version $built - set the version in pyproject.toml and retag"
+            exit 1
+          fi
+
       - uses: pypa/gh-action-pypi-publish@release/v1
