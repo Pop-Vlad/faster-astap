@@ -12,12 +12,19 @@
 #   Workflow filename:  release.yml
 #   Environment:        pypi          (testpypi on test.pypi.org)
 #
-# Then:
-#   - "Run workflow" from the Actions tab publishes to TestPyPI.
-#   - Pushing a v* tag publishes to PyPI proper.
+# Then there are two ways to run this, and which one you use is what decides
+# where it publishes — not what the commit happens to be tagged with:
+#
+#   - "Run workflow" from the Actions tab publishes to TestPyPI, and never to
+#     PyPI, whatever tags point at the commit it runs on.
+#   - Pushing a v* tag starts this by itself and publishes to PyPI. There is
+#     nothing to click; the push is the trigger.
 #
 # A version can never be uploaded twice, on either index, so iterate on TestPyPI
-# with 0.1.0.dev1, 0.1.0.dev2 and keep the real version for the real thing.
+# with 0.4.0.dev1, 0.4.0.dev2, and keep 0.4.0 itself for the release. The
+# release commit sets the version in pyproject.toml to 0.4.0, and the tag has to
+# point at that commit — the check in the pypi job below is what catches tagging
+# one that still says .devN.
 
 name: Release
 
@@ -48,7 +55,11 @@ jobs:
 
       # Everything it builds and how it tests is in [tool.cibuildwheel] in
       # pyproject.toml, so this stays a plain invocation.
-      - uses: pypa/cibuildwheel@v4
+      #
+      # Pinned to a minor tag, which is the largest this action publishes: there
+      # is no floating pypa/cibuildwheel@v4 to follow, so a major-only pin is a
+      # 404 rather than the latest release.
+      - uses: pypa/cibuildwheel@v4.1
 
       - uses: actions/upload-artifact@v4
         with:
