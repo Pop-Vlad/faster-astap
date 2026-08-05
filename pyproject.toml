@@ -12,7 +12,7 @@ name = "faster-astap"
 # The .devN suffix is for proving the release pipeline out on TestPyPI, since no
 # index ever lets a version be uploaded twice. Dev releases sort before the real
 # one, so 0.4.0 itself stays free. Drop the suffix and tag v0.4.0 to release.
-version = "0.4.0.dev1"
+version = "0.4.1"
 description = "Fast astrometric plate solving: ASTAP's algorithm in C++, plus a whole-sky index solver"
 readme = "README.md"
 requires-python = ">=3.9"
