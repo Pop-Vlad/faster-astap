@@ -19,6 +19,10 @@ digit for digit; `astap_index_solve` does everything else faster.
 Both read the same star databases as the original, take the same options, and
 write the same `.ini` and `.wcs` files, so either can stand in for `astap_cli`.
 
+Both are also a [Python package](#python-package), `pip install faster-astap`,
+which is the way to use them from a script or a notebook — and the only way to
+solve an image already in memory, without it going through a file first.
+
 [DESIGN.md](DESIGN.md) has the rest: how the matching works, the depth ladder the
 index solver rests on, where each solver stops working and why, and how the port
 was made fast.
@@ -272,6 +276,94 @@ astap_index_solve -f image.fits -d <db> -maxtier 3600
 Neither is needed for ordinary work — the default ladder covers 0.25° upwards.
 [DESIGN.md](DESIGN.md#the-index-solvers-depth-ladder) explains what a rung is,
 why the ceiling sets the smallest field, and what the measurements say.
+
+## Python package
+
+```sh
+pip install faster-astap
+```
+
+You still need a star database — the package cannot bundle one, and looks in the
+same places the command line tools do:
+
+```python
+import faster_astap as fa
+fa.find_databases()      # where it will look, in order
+```
+
+### Solving
+
+The point of the package, rather than shelling out to `astap_index_solve`, is
+that the index stays in memory. `load()` is the expensive call and happens once;
+after that a solve is milliseconds.
+
+```python
+import faster_astap as fa
+
+solver = fa.IndexSolver(database_path=r"D:\astap\d80")
+solver.load()                          # reads the index; seconds the first time
+print(solver)                          # <IndexSolver d80 12 tiers 61.6M quads 2.9 GiB>
+
+for frame in frames:                   # a numpy array, or a path
+    sol = solver.solve(frame, fov=1.2)
+    if sol:
+        print(sol.ra_deg, sol.dec_deg, sol.scale_arcsec, sol.rotation_deg)
+```
+
+`fov` is the field diameter in degrees when you know it. It only orders the
+depth sweep, so a wrong value costs time rather than a solution, and leaving it
+out is fine — the index solver needs no position and no scale.
+
+A `Solution` is falsey when nothing was found, so `if sol:` is the check. It
+carries the WCS in the units people actually write down:
+
+| | |
+| --- | --- |
+| `ra_deg` `dec_deg` `ra_hours` | image centre; `ra` and `dec` are the same in radians |
+| `scale_arcsec` | pixel scale, unsigned |
+| `rotation_deg` | rotation at the centre |
+| `fov_deg` | `(width, height)` in degrees, from the solved scale |
+| `stars` `nr_inliers` `solve_seconds` | what the solve did |
+| `messages` | the lines the command line tools would have printed |
+| `to_astropy_wcs()` | the solution as an `astropy.wcs.WCS`; astropy is not a dependency |
+
+### Solving an array
+
+Any 2-D array, or 3-D as `(colours, height, width)` or `(height, width, colours)`.
+Integer camera frames need no conversion:
+
+```python
+from astropy.io import fits
+frame = fits.getdata("light_0001.fits")          # uint16 straight off the sensor
+sol = solver.solve(frame, fov=1.2)
+```
+
+### The port, for a reference answer
+
+Same lifecycle, same `Solution`, so swapping one for the other is a one line
+change. It searches outward from a start position, so it is much quicker told
+roughly where the telescope was pointing and much slower when not.
+
+```python
+import math
+
+port = fa.SpiralSolver(database_path=r"D:\astap\d80").load()
+sol = port.solve(frame,
+                 ra=math.radians(53.0),      # radians, as the solver works in
+                 dec=math.radians(24.0),
+                 radius=10)                  # degrees to search around it
+```
+
+Reach for the port when you need the answer `astap_cli` would have given, digit
+for digit. For everything else `IndexSolver` is faster and needs less from you.
+
+### Image formats in the wheel
+
+The published package reads the formats:
+
+```
+.fit .fits .fts .new   .fz (Rice)   .ppm .pgm .pfm   .bmp
+```
 
 ## Build
 
