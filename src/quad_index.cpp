@@ -576,9 +576,12 @@ namespace astap {
     // One mapping for the whole file, shared by every tier taken out of it. The
     // quad arrays are then used where they lie: nothing is copied into this
     // process, and a page no query ever reaches is never read at all.
+    //
+    // Deliberately without advise_random(). MADV_RANDOM switches off readahead,
+    // and readahead is what turns a cold cache into one request instead of thirty-two.
+    // The image that finds no solution is the case that decides this: it sweeps the whole ladder
     const auto map = std::make_shared<MappedFile>();
     if (!map->open(path, error)) return false;
-    map->advise_random();
     const uint8_t *base = map->data();
     const uint64_t ncells = cells_for(info.nbins);
 

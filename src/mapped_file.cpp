@@ -141,11 +141,5 @@ namespace astap {
     fd_ = -1;
   }
 
-  void MappedFile::advise_random() const {
-#ifdef MADV_RANDOM
-    if (data_) ::madvise(const_cast<uint8_t *>(data_), size_, MADV_RANDOM);
-#endif
-  }
-
 #endif
 } // namespace astap

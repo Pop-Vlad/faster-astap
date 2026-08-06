@@ -40,11 +40,6 @@ namespace astap {
     const uint8_t *data() const { return data_; }
     size_t size() const { return size_; }
 
-    // Says the access will be scattered, so the kernel does not read ahead over
-    // pages the caller will never look at. Advisory, and a no-op on a platform
-    // that offers no equivalent.
-    void advise_random() const;
-
   private:
     const uint8_t *data_ = nullptr;
     size_t size_ = 0;

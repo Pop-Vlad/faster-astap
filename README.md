@@ -100,15 +100,16 @@ reports where it is pointing.
 | `astap_cli` 2026.05.18 (reference) | 24.39 s | 1.0x | 0.341 s | 1.0x |
 | `astap_solve`, 1 thread | 9.86 s | 2.5x | 0.180 s | 1.9x |
 | `astap_solve`, 20 threads | **3.07 s** | **7.9x** | **0.158 s** | **2.2x** |
-| `astap_index_solve`, per run | 1.65 s | 14.8x | 1.63 s | 0.2x |
+| `astap_index_solve`, per run | 0.165 s | 148x | 0.153 s | 2.2x |
 | `astap_index_solve`, per image in a batch | **0.005 s** | **4900x** | **0.002 s** | **170x** |
 
-Reading the two index solver rows together matters, and the second one is the
-honest headline only if you are solving more than one image. The solve itself is
-5 ms; the 1.6 s is almost entirely the 2.7 GB index being read from disk, paid
-once per invocation. Hand it eight images and it solves all eight in 2.08 s
-total. Hand it one, and for a *hinted* solve it is slower than the reference —
-the index buys you nothing when the answer was nearly known already.
+Reading the two index solver rows together matters. The per-run figure is a
+whole invocation — map the index, read the 145 MB frame, detect stars, solve;
+the 5 ms is the solve stage alone, which is what a second image in the same
+invocation adds. The 2.7 GB index is memory-mapped rather than read, so with a
+warm page cache starting a run costs nothing worth measuring and eight images
+solve in 1.15 s total. The exception is a genuinely cold cache: the first run
+after a boot pays about 4.9 s faulting the index in from disk, once.
 
 Things worth noting:
 
