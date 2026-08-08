@@ -96,11 +96,6 @@ namespace astap {
     mapping_ = nullptr;
   }
 
-  // Windows offers PrefetchVirtualMemory, which is the opposite request, and no
-  // way to say "do not read ahead". Nothing to do.
-  void MappedFile::advise_random() const {
-  }
-
 #else
 
   bool MappedFile::open(const std::string &path, std::string *error) {
