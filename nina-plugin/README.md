@@ -79,6 +79,9 @@ lost frame in the middle of a night.
       README.md                        this file
       CHANGELOG.md
       CMakeLists.txt                   builds astap_index_server
+      install.ps1                      puts the built plugin where N.I.N.A. looks
+      install.cmd                      the same, for double-clicking
+      uninstall.cmd                    install.ps1 -Uninstall, for double-clicking
       server/index_server_main.cpp     the server, and the ASTAP-compatible client
       server/ipc.cpp, server/ipc.h     named pipe on Windows, Unix socket elsewhere
       server/version.rc                the version N.I.N.A. checks before it will call us
@@ -86,7 +89,6 @@ lost frame in the middle of a night.
       plugin/FasterAstapPlugin.cs      the manifest: settings, lifecycle, ASTAP path swap
       plugin/IndexServer.cs            starts and stops the server, and asks its status
       plugin/Options.xaml              the options page
-      dist/FasterAstap.zip             the installable package
 
 The two halves are built by different tools and share nothing but the wire
 format in `IndexServer.cs` and `ipc.cpp`.
@@ -110,12 +112,13 @@ since the application supplies them at runtime.
 
 ## Installing
 
-Four files: `FasterAstap.dll`, its `.pdb` and `.deps.json`, and
-`astap_index_server.exe`. They belong together in one folder, because the plugin
-points N.I.N.A. at the executable sitting beside it.
+Run the install script that copies the faster-astap files:
 
-Either use N.I.N.A.'s own installer — **Plugins ▸ install from archive**, pointed
-at `dist/FasterAstap.zip` — or copy the folder to
+    powershell -ExecutionPolicy Bypass -File nina-plugin\install.ps1
+
+or double-click `install.cmd`, which is the same thing with the execution policy
+already dealt with — as is `uninstall.cmd` for the other direction. It takes the
+build output from `plugin\bin\x64\Release` and puts it in
 
     %localappdata%\NINA\Plugins\3.0.0\FasterAstap\
 
@@ -125,9 +128,26 @@ treated as a leftover from before that folder existed and is migrated *into*
 `3.0.0` on the next start, so a folder named for the application version ends up
 one level too deep and is never seen.
 
+Run it again after a rebuild and it updates in place. Only the four files are
+replaced; `faster-astap.ini` and `faster-astap.log`, which the plugin writes into
+that same folder, are left as they are, so settings survive an update.
+
 Nothing is written to `Program Files` and no administrator rights are involved.
-N.I.N.A. holds the assembly open while it runs, so it has to be closed before a
-rebuilt plugin can be copied over.
+N.I.N.A. holds the assembly open while it runs, so it has to be closed first —
+the script checks, and says so, rather than failing halfway through a copy. It
+also asks a leftover `astap_index_server` to stop before overwriting it, which is
+the state a crashed N.I.N.A. leaves behind.
+
+What it takes:
+
+| | |
+| --- | --- |
+| `-Source` | where the build output is, if not `plugin\bin\x64\Release` |
+| `-Destination` | the plugin folder, if not the one above |
+| `-Uninstall` | remove the plugin folder instead |
+| `-RemoveCache` | with `-Uninstall`, delete the index cache as well |
+| `-Force` | kill an `astap_index_server` that ignored the request to stop |
+| `-WhatIf` | say what would be copied or deleted, and do neither |
 
 The star database is not copied there. It is gigabytes, and there is usually
 already one beside the existing ASTAP installation, which is where the plugin
@@ -214,6 +234,15 @@ acceptable answer here in a way it would not be for the solver path.
 it restores the path, stops the server, and deletes the cache and the generated
 files there and then, with no inference involved. It cannot delete the plugin
 itself — N.I.N.A. does that afterwards.
+
+With N.I.N.A. already closed, the reliable route is the script, which has the
+same nothing-inferred property:
+
+    powershell -ExecutionPolicy Bypass -File nina-plugin\install.ps1 -Uninstall -RemoveCache
+
+or `uninstall.cmd`, which is that without the `-RemoveCache`: double-clicking it
+takes the plugin folder and leaves the cache, and says where it left it. Pass
+`-RemoveCache` to take that too.
 
 Before leaving *delete the index cache when the plugin is uninstalled* ticked,
 note that the cache is keyed to the star database and the quad tolerance, not to

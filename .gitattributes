@@ -1,0 +1,6 @@
+# cmd.exe reads a batch file by byte offset and re-seeks after every external
+# command it runs. LF-only line endings put those offsets out by one per line,
+# and the interpreter ends up resuming in the middle of a later line. Keep the
+# wrappers CRLF whatever the checking-out machine is set to.
+*.cmd text eol=crlf
+*.bat text eol=crlf
