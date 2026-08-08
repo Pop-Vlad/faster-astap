@@ -33,7 +33,7 @@ namespace astap {
       settings_.database_path = with_separator(settings_.database_path);
       found = probe.select(settings_.database_path, settings_.database, 1.0);
     } else {
-      for (const std::string &dir : default_database_directories()) {
+      for (const std::string &dir: default_database_directories()) {
         if (!probe.select(with_separator(dir), settings_.database, 1.0)) continue;
         settings_.database_path = with_separator(dir);
         found = true;

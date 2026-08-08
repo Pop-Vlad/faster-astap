@@ -6,7 +6,7 @@
 # astap_solve and astap_index_solve exactly as they were.
 #
 # The C# plugin that goes with this executable is in src/ as well, and is built
-# by the .NET SDK rather than by CMake — see README.md.
+# by the .NET SDK rather than by CMake - see README.md.
 
 # The version resource is not decoration: N.I.N.A. reads the executable's
 # FileVersion before it will pass its default options. See server/version.rc.

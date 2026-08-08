@@ -60,11 +60,11 @@ namespace astap {
 
       const uint8_t *const cstart = c;
       c += bsize;
-      const uint8_t *const cend = cstart + clen;     // CFITSIO's per block check
+      const uint8_t *const cend = cstart + clen; // CFITSIO's per block check
       const uint8_t *const chard = cstart + clen + kInputPadding; // hard limit
 
       uint32_t b = *c++; // bit buffer
-      int nbits = 8;     // bits remaining in b
+      int nbits = 8; // bits remaining in b
       int i = 0;
       while (i < nx) {
         // The FS value is in the first fsbits bits.
@@ -114,7 +114,8 @@ namespace astap {
         } else {
           // Normal case, Rice coding.
           while (i < imax) {
-            while (b == 0) { // count the leading zeros
+            while (b == 0) {
+              // count the leading zeros
               if (c >= chard) return 1;
               nbits += 8;
               b = *c++;
@@ -122,7 +123,7 @@ namespace astap {
             const int nzero = nbits - nonzero_count[b];
             nbits -= nzero + 1;
             b ^= static_cast<uint32_t>(1) << nbits; // flip the leading one bit
-            nbits -= fs;                            // the fs trailing bits
+            nbits -= fs; // the fs trailing bits
             while (nbits < 0) {
               if (c >= chard) return 1;
               b = (b << 8) | *c++;
@@ -442,7 +443,7 @@ namespace astap {
                 // expression in extended precision, hence the doubles here.
                 col = (static_cast<double>(value) - static_cast<double>(p.dither_table[dither_next]) +
                        0.5) *
-                        tile_scale +
+                      tile_scale +
                       tile_zero;
               else
                 col = value * tile_scale + tile_zero;

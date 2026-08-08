@@ -2,7 +2,7 @@
 """Download a parametric test corpus from NASA SkyView.
 
 Every image comes back as FITS with a correct WCS written by SkyView, so the
-ground truth travels with the file — that is what makes this usable as a
+ground truth travels with the file - that is what makes this usable as a
 capability gate rather than a self-consistency check.
 
 The grid is chosen to exercise the things that actually break a plate solver,
@@ -13,12 +13,12 @@ per the index solver sections of README.md:
   * survey depth, fetched as two separate images of the same field below one
     degree: a shallow one (2MASS, a few hundred stars/deg^2) and a deep one
     (DSS2 Red, thousands). Depth is not a detail of the cutout, it is the axis
-    the index solver lives on — the tier that solves an image has to match its
+    the index solver lives on - the tier that solves an image has to match its
     detected density, and a cutout at fixed pixel count gets *deeper* as the
     field shrinks (the same field gives 748 stars/deg^2 at 0.5 degrees and 2700
     at 0.1), which is what puts small fields above the default tier ladder;
   * galactic latitude from the plane to the pole, which is the practical knob
-    for detected star density — the axis that broke the quad index when the
+    for detected star density - the axis that broke the quad index when the
     index tier and the image density diverged by more than about 2x;
   * a field near the celestial pole, where the tile geometry and the RA
     wraparound are special-cased.
@@ -53,17 +53,17 @@ ENDPOINT = "https://skyview.gsfc.nasa.gov/cgi-bin/images"
 # astap_cli fail on a 0.5 degree DSS2 cutout of M13. Keep them for regression
 # purposes, not as part of the routine solve-rate figure.
 FIELDS = [
-    ("mid_lat_a",       53.0,   24.0,  False, "ordinary mid galactic latitude field"),
-    ("mid_lat_b",      160.0,  -20.0,  False, "ordinary mid galactic latitude field"),
-    ("m31",             10.68,  41.27, False, "extended galaxy, moderate density"),
-    ("galactic_pole",  192.86,  27.13, False, "north galactic pole, sparse"),
-    ("sparse_south",    40.0,  -55.0,  False, "high galactic latitude, sparse"),
-    ("near_ncp",        90.0,   88.5,  False, "near the celestial pole, tile geometry edge case"),
-    ("near_scp",       270.0,  -88.5,  False, "near the south celestial pole"),
-    ("ra_zero",          0.3,   15.0,  False, "straddles RA 0h, wraparound edge case"),
-    ("galactic_plane", 284.0,    0.5,  True,  "Milky Way plane, very dense"),
-    ("m13",            250.42,  36.46, True,  "globular cluster, degenerate quads"),
-    ("orion",           83.82,  -5.39, True,  "strong nebulosity"),
+    ("mid_lat_a", 53.0, 24.0, False, "ordinary mid galactic latitude field"),
+    ("mid_lat_b", 160.0, -20.0, False, "ordinary mid galactic latitude field"),
+    ("m31", 10.68, 41.27, False, "extended galaxy, moderate density"),
+    ("galactic_pole", 192.86, 27.13, False, "north galactic pole, sparse"),
+    ("sparse_south", 40.0, -55.0, False, "high galactic latitude, sparse"),
+    ("near_ncp", 90.0, 88.5, False, "near the celestial pole, tile geometry edge case"),
+    ("near_scp", 270.0, -88.5, False, "near the south celestial pole"),
+    ("ra_zero", 0.3, 15.0, False, "straddles RA 0h, wraparound edge case"),
+    ("galactic_plane", 284.0, 0.5, True, "Milky Way plane, very dense"),
+    ("m13", 250.42, 36.46, True, "globular cluster, degenerate quads"),
+    ("orion", 83.82, -5.39, True, "strong nebulosity"),
 ]
 
 # Which surveys to fetch at a given field size. Below one degree both are taken,
@@ -76,12 +76,12 @@ FIELDS = [
 # Above one degree only DSS2 is fetched: 2MASS at 2 degrees and beyond is too
 # sparse to be a fair wide-field test, and the wide end is not where depth binds.
 # Below 0.1 degrees only 2MASS, since at 0.05 degrees every field is down to
-# 3-10 detected stars and neither solver gets near it — those images are kept as
+# 3-10 detected stars and neither solver gets near it - those images are kept as
 # the negative control that fixes where the floor is, and one survey shows that.
 SURVEYS_FOR_FOV = [
-    (0.1, ["2MASS-J"]),               # below 0.1 degrees
-    (1.0, ["2MASS-J", "DSS2 Red"]),   # 0.1 to 1 degree: both depths
-    (99.0, ["DSS2 Red"]),             # 1 degree and above
+    (0.1, ["2MASS-J"]),  # below 0.1 degrees
+    (1.0, ["2MASS-J", "DSS2 Red"]),  # 0.1 to 1 degree: both depths
+    (99.0, ["DSS2 Red"]),  # 1 degree and above
 ]
 SURVEY_TAGS = {"2MASS-J": "2massj", "DSS2 Red": "dss2r", "DSS1 Red": "dss1r"}
 
@@ -121,7 +121,7 @@ def fetch(url, dest, timeout, retries=3):
                 return False, f"not FITS ({head[:120]})"
             with open(dest, "wb") as f:
                 f.write(data)
-            return True, f"{len(data)/1e6:.1f} MB"
+            return True, f"{len(data) / 1e6:.1f} MB"
         except Exception as exc:  # network, timeout, HTTP error
             if attempt == retries - 1:
                 return False, str(exc)

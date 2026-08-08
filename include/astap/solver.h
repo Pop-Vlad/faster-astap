@@ -57,7 +57,7 @@ namespace astap {
     }
 
     // Replaces the settings between solves. Worth having because the per image
-    // ones — the field size, the start position, the search radius — change from
+    // ones - the field size, the start position, the search radius - change from
     // frame to frame while the expensive part of this object does not: the
     // workers keep their database handles and their tile caches, which a fresh
     // Solver would have to build again. Every solve re-points the workers at the
@@ -97,11 +97,11 @@ namespace astap {
     // are the parts of `spiral_wall`, which together with `image_wall` accounts
     // for the run time.
     struct Timing {
-      double image_wall = 0;      // binning, background and star detection, per FOV attempt
-      double spiral_wall = 0;     // the whole squared spiral search
-      double read_stars_cpu = 0;  // phase 1: star database I/O and record decoding
-      double quads_cpu = 0;       // phase 2: database quad construction
-      double match_cpu = 0;       // phase 3: hash matching and the least squares fit
+      double image_wall = 0; // binning, background and star detection, per FOV attempt
+      double spiral_wall = 0; // the whole squared spiral search
+      double read_stars_cpu = 0; // phase 1: star database I/O and record decoding
+      double quads_cpu = 0; // phase 2: database quad construction
+      double match_cpu = 0; // phase 3: hash matching and the least squares fit
     };
 
     const Timing &timing() const { return timing_; }

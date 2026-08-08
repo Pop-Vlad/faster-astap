@@ -6,9 +6,9 @@
 // application that solves a frame every few minutes. This class is the
 // separation of the two: `load` once, `solve` as often as you like.
 //
-// The whole per image pipeline lives here — binning, star detection, the tier
+// The whole per image pipeline lives here - binning, star detection, the tier
 // sweep, the second pass, the rescale back to original pixels and the .ini and
-// .wcs files — so that `astap_index_solve` and the resident server produce the
+// .wcs files - so that `astap_index_solve` and the resident server produce the
 // same output for the same image by construction rather than by agreement.
 //
 // Not thread safe. `solve` reads the star database through a file handle and
@@ -47,7 +47,7 @@ namespace astap {
 
   // The ladder a run should use. `tiers` names one outright when it is not
   // empty; otherwise the default one is taken and the deep rungs up to
-  // `max_tier` are added, which is the common case — a narrow field needs
+  // `max_tier` are added, which is the common case - a narrow field needs
   // deeper rungs and nothing else about the ladder changes.
   std::vector<double> resolve_ladder(const std::string &tiers, double max_tier);
 
@@ -75,18 +75,18 @@ namespace astap {
     // because a caller who says where the database is should not silently get a
     // different one.
     std::string database_path;
-    std::string database = "auto";  // abbreviation such as d80, or "auto"
+    std::string database = "auto"; // abbreviation such as d80, or "auto"
 
     // Sets the index hash bin width as well as the match tolerance, so a cache
     // belongs to exactly one value of it.
     double quad_tolerance = 0.007;
-    std::vector<double> ladder;  // empty selects default_tier_ladder()
+    std::vector<double> ladder; // empty selects default_tier_ladder()
 
     // One file holding the whole ladder, instead of the cached-per-rung layout.
     // Empty is the normal case and the one that lets ladders compose.
     std::string index_cache;
-    bool use_cache = true;  // false builds in memory and writes nothing
-    bool rebuild = false;   // build even when a usable cache exists
+    bool use_cache = true; // false builds in memory and writes nothing
+    bool rebuild = false; // build even when a usable cache exists
   };
 
   // What solving one image needs, whatever the pixels arrived in. Everything
@@ -99,11 +99,11 @@ namespace astap {
     // than a solution.
     double fov = 0;
     int max_stars = 500;
-    double min_star_size = 1.5;  // arcsec, applied only when fov is known
-    int downsample = 0;          // 0 selects the factor automatically
+    double min_star_size = 1.5; // arcsec, applied only when fov is known
+    int downsample = 0; // 0 selects the factor automatically
 
     bool want_sip = false;
-    bool refine = true;  // the second pass against the database
+    bool refine = true; // the second pass against the database
 
     // What to call this image in the messages. The file name when it came from
     // one; a frame number or nothing at all when it did not.
@@ -112,7 +112,7 @@ namespace astap {
 
   struct SolveRequest {
     std::string filename;
-    std::string output_base;  // empty names the outputs after `filename`
+    std::string output_base; // empty names the outputs after `filename`
 
     SolveParams params;
 
@@ -130,8 +130,8 @@ namespace astap {
     Header head;
     SipCoefficients sip;
 
-    double solve_seconds = 0;  // the tier sweep alone
-    double total_seconds = 0;  // load, detect, sweep, second pass, files
+    double solve_seconds = 0; // the tier sweep alone
+    double total_seconds = 0; // load, detect, sweep, second pass, files
 
     int stars = 0;
     int bin = 1;
@@ -163,7 +163,7 @@ namespace astap {
 
     // Solves an image already in memory, and touches no files at all.
     //
-    // This is the whole per image pipeline — binning, star detection, the tier
+    // This is the whole per image pipeline - binning, star detection, the tier
     // sweep, the second pass, the rescale back to original pixels. `solve`
     // below is exactly this with a file read in front and the .ini and .wcs
     // written after, which is what keeps the two agreeing.
@@ -190,8 +190,11 @@ namespace astap {
     size_t tiers_from_cache() const { return from_cache_; }
     size_t tiers_built() const { return built_; }
     size_t tier_count() const { return tiers_.size(); }
+
     size_t quad_count() const;
+
     size_t bytes() const;
+
     std::vector<double> densities() const;
 
   private:

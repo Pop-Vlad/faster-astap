@@ -1,8 +1,8 @@
 // The spiral search port with the same lifecycle as SolveService: set up once,
 // solve as often as you like.
 //
-// The port has less to set up than the index solver — there is no ladder to
-// build — but the setup it does have is worth keeping between images. Selecting
+// The port has less to set up than the index solver - there is no ladder to
+// build - but the setup it does have is worth keeping between images. Selecting
 // the database, starting the worker threads and giving each its own reader all
 // happen once here instead of per frame, and with `warm` the area files are
 // pulled into the page cache before the first solve rather than during it.
@@ -30,7 +30,7 @@ namespace astap {
     // Directory holding the star database. Empty searches
     // default_database_directories(), exactly as SolveService does.
     std::string database_path;
-    std::string database = "auto";  // abbreviation such as d80, or "auto"
+    std::string database = "auto"; // abbreviation such as d80, or "auto"
 
     // Touch every area file during load(), so the first solve does not pay to
     // fault them in. See StarDatabase::warm.
@@ -51,7 +51,7 @@ namespace astap {
     double dec = 99999;
 
     // Where the mount said it was pointing, if it said. This does not steer the
-    // search — `ra` and `dec` above do — it only gives the solved offset
+    // search - `ra` and `dec` above do - it only gives the solved offset
     // something to be measured from in the report.
     double mount_ra = 99999;
     double mount_dec = 99999;
@@ -60,12 +60,12 @@ namespace astap {
     // is what stops the header's plate scale being believed over this.
     double fov = 0;
     bool fov_specified = false;
-    double radius = 180;  // search radius in degrees
+    double radius = 180; // search radius in degrees
 
     int max_stars = 500;
     double quad_tolerance = 0.007;
-    double min_star_size = 1.5;  // arcsec
-    int downsample = 0;          // 0 selects the factor automatically
+    double min_star_size = 1.5; // arcsec
+    int downsample = 0; // 0 selects the factor automatically
     bool force_oversize = false; // "slow": more overlap while searching
     bool check_pattern_filter = false;
     bool want_sip = false;
@@ -76,7 +76,7 @@ namespace astap {
 
   struct SpiralRequest {
     std::string filename;
-    std::string output_base;  // empty names the outputs after `filename`
+    std::string output_base; // empty names the outputs after `filename`
     SpiralParams params;
     bool write_wcs = false;
     std::string cmdline;

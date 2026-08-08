@@ -43,7 +43,7 @@ namespace {
     uint64_t offset;
   };
 
-  template <typename T>
+  template<typename T>
   T read_pod(std::istream &f) {
     T v{};
     f.read(reinterpret_cast<char *>(&v), sizeof(T));
@@ -60,7 +60,7 @@ namespace {
     read_pod<uint32_t>(f); // database type
     const uint32_t ntiers = read_pod<uint32_t>(f);
     nbins = read_pod<uint32_t>(f);
-    read_pod<uint32_t>(f);                          // reserved
+    read_pod<uint32_t>(f); // reserved
     for (int i = 0; i < 4; i++) read_pod<double>(f); // tolerance, centre, radius
     std::vector<Tier> tiers(ntiers);
     for (uint32_t k = 0; k < ntiers; k++) {
@@ -76,7 +76,7 @@ int main() {
   // Any database will do: the layout does not depend on which one.
   StarDatabase db;
   bool have_db = false;
-  for (const std::string &dir : default_database_directories()) {
+  for (const std::string &dir: default_database_directories()) {
     std::string d = dir;
     if (!d.empty() && d.back() != '/' && d.back() != '\\') d += '/';
     if (db.select(d, "auto", 1.0)) {
@@ -102,7 +102,7 @@ int main() {
     std::printf("FAIL: could not build an index from %s\n", db.path().c_str());
     return 1;
   }
-  for (const QuadIndex &ix : built)
+  for (const QuadIndex &ix: built)
     std::printf("built tier %g stars/deg^2: %zu quads\n", ix.settings().star_density, ix.size());
 
   const std::string path =

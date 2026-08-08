@@ -1,9 +1,9 @@
 // Solver built on a pre-built quad index instead of a spiral search.
 // See the index solver sections of README.md.
 //
-// The matching front end is new — one pass over the image quads against a
+// The matching front end is new - one pass over the image quads against a
 // whole-sky index, a joint vote on scale and position, then a RANSAC consensus
-// — but the back end is the port's: the same overdetermined system solved by
+// - but the back end is the port's: the same overdetermined system solved by
 // `lsq_fit`, the same acceptance checks, so a solution has to clear the same bar
 // the reference implementation sets.
 
@@ -54,7 +54,7 @@ namespace astap {
     // brightest half of the stars halves the image's density, which reaches the
     // same tier a rung twice as deep would. So an image deeper than the ladder
     // is retried against fewer of its own stars instead of against an index
-    // nobody wants to store — over the corpus this is worth as much at 0.25
+    // nobody wants to store - over the corpus this is worth as much at 0.25
     // degrees as doubling the ladder twice, at no cost in cache.
     //
     // Each level halves the star list, so `levels` of 2 covers a factor of four
@@ -67,20 +67,20 @@ namespace astap {
 
   struct IndexSolveResult {
     bool solved = false;
-    std::string reason;  // why it failed, when it did
+    std::string reason; // why it failed, when it did
 
-    double ra0 = 0, dec0 = 0;      // image centre, radians
+    double ra0 = 0, dec0 = 0; // image centre, radians
     double crpix1 = 0, crpix2 = 0;
     double cdelt1 = 0, cdelt2 = 0; // deg/px
     double crota1 = 0, crota2 = 0; // deg
     double cd1_1 = 0, cd1_2 = 0, cd2_1 = 0, cd2_2 = 0;
 
-    int nr_matches = 0;     // candidate pairs from the index
-    int nr_references = 0;  // pairs used in the final fit
-    int nr_inliers = 0;     // consensus size the fit was built from
-    int peaks_tried = 0;    // vote peaks verified before one passed
+    int nr_matches = 0; // candidate pairs from the index
+    int nr_references = 0; // pairs used in the final fit
+    int nr_inliers = 0; // consensus size the fit was built from
+    int peaks_tried = 0; // vote peaks verified before one passed
     double scale_arcsec_px = 0;
-    double tier_density = 0;  // depth tier that produced the solution
+    double tier_density = 0; // depth tier that produced the solution
     int tiers_tried = 0;
     // Set when the solution needed the larger quad groups of the second pass.
     bool many_quads_pass = false;
@@ -100,7 +100,7 @@ namespace astap {
     // these through ASTAP's crota/flipped convention, which is not a relation
     // worth re-deriving in reverse.
     bool fit_valid = false;
-    SolutionVector fit_x{}, fit_y{};  // pixels -> arcsec about (fit_ref_ra, fit_ref_dec)
+    SolutionVector fit_x{}, fit_y{}; // pixels -> arcsec about (fit_ref_ra, fit_ref_dec)
     double fit_ref_ra = 0, fit_ref_dec = 0;
   };
 
@@ -128,8 +128,8 @@ namespace astap {
   //
   // Quads are first built one per star from its three nearest neighbours, which
   // solves most images. If that finds nothing, they are rebuilt from every
-  // combination of each star's six nearest — fifteen per star, a strict superset
-  // — which is what sparse and wide fields need: a quad matches only when the
+  // combination of each star's six nearest - fifteen per star, a strict superset
+  // - which is what sparse and wide fields need: a quad matches only when the
   // image and the catalogue chose the same four stars, and at a few stars per
   // square degree a single differing detection replaces a star's quad outright.
   //
@@ -140,10 +140,10 @@ namespace astap {
 
   struct IndexRefineResult {
     bool ok = false;
-    int nr_quads = 0;      // quads matched in the second pass
+    int nr_quads = 0; // quads matched in the second pass
     int nr_candidates = 0; // database quads it had to match against
     bool sip_valid = false;
-    bool kept = false;  // false when the refit was discarded as less well supported
+    bool kept = false; // false when the refit was discarded as less well supported
     SipCoefficients sip;
     // Median residual over the second pass's own matched quads, in arcsec, for
     // the incoming index solution and for the refit. Both models are measured
@@ -160,7 +160,7 @@ namespace astap {
   // identify the field but leaves accuracy on the table and rarely produces the
   // twenty matched quads a cubic distortion fit needs. This reads the database
   // once at the solved position, at a depth matched to the image's own star
-  // count, and redoes the match there — the same work the spiral does at each of
+  // count, and redoes the match there - the same work the spiral does at each of
   // its many positions, done once at the right one. It costs 0.3 to 0.9 ms all
   // in, against a 5 ms solve.
   //

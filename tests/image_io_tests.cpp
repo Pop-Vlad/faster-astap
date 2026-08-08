@@ -93,13 +93,14 @@ namespace {
   std::string write_pnm(bool colour, int maxval) {
     std::vector<uint8_t> v;
     append(v, (colour ? std::string("P6\n") : std::string("P5\n")) + "# written by image_io_tests\n" +
-                  std::to_string(kW) + " " + std::to_string(kH) + "\n" + std::to_string(maxval) +
-                  "\n");
+              std::to_string(kW) + " " + std::to_string(kH) + "\n" + std::to_string(maxval) +
+              "\n");
     for (int y = 0; y < kH; y++)
       for (int x = 0; x < kW; x++)
         for (int k = 0; k < (colour ? 3 : 1); k++) {
-          const int value = maxval == 255 ? static_cast<int>(expected(x, y)) % 256
-                                          : static_cast<int>(expected(x, y));
+          const int value = maxval == 255
+                              ? static_cast<int>(expected(x, y)) % 256
+                              : static_cast<int>(expected(x, y));
           if (maxval == 65535) v.push_back(static_cast<uint8_t>(value >> 8));
           v.push_back(static_cast<uint8_t>(value & 0xFF));
         }
@@ -144,7 +145,8 @@ namespace {
   std::string write_bmp() {
     const size_t stride = (static_cast<size_t>(kW) * 3 + 3) / 4 * 4;
     std::vector<uint8_t> pixels;
-    for (int y = kH - 1; y >= 0; y--) { // bottom row first
+    for (int y = kH - 1; y >= 0; y--) {
+      // bottom row first
       const size_t start = pixels.size();
       for (int x = 0; x < kW; x++) {
         const uint8_t value = static_cast<uint8_t>(static_cast<int>(expected(x, y)) % 256);
@@ -196,7 +198,7 @@ namespace {
     const ImageLoadResult r = load_image(bmp, head, img);
     const int v = static_cast<int>(expected(3, 2)) % 256;
     check(r.ok && img.colours() == 3 && head.width == kW && head.height == kH &&
-              img.at(0, kH - 1 - 2, 3) == v * 257 && img.at(2, kH - 1 - 2, 3) == v * 257,
+          img.at(0, kH - 1 - 2, 3) == v * 257 && img.at(2, kH - 1 - 2, 3) == v * 257,
           "BMP 24 bit, bottom up");
   }
 
@@ -294,9 +296,9 @@ namespace {
       const char *what;
     };
     const Case cases[] = {
-        {"grey16.png", 1, 1, 0, "PNG 16 bit grey"},
-        {"grey16_lzw.tif", 1, 1, 0, "TIFF 16 bit grey, LZW"},
-        {"grey16_deflate.tif", 1, 1, 0, "TIFF 16 bit grey, deflate"},
+      {"grey16.png", 1, 1, 0, "PNG 16 bit grey"},
+      {"grey16_lzw.tif", 1, 1, 0, "TIFF 16 bit grey, LZW"},
+      {"grey16_deflate.tif", 1, 1, 0, "TIFF 16 bit grey, deflate"},
     };
     for (const Case &c: cases) {
       Header head;

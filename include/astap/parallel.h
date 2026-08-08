@@ -43,7 +43,7 @@ namespace astap {
   // a fresh set, so this costs nothing but the restart.
   //
   // Nothing has to call it: the pool is deliberately never destroyed, so a
-  // program that simply exits is fine. It exists for the one case that is not —
+  // program that simply exits is fine. It exists for the one case that is not -
   // a shared library that wants its threads gone while it is still loaded. The
   // Python extension registers it with atexit, because letting the pool be torn
   // down as the module unloads would mean joining threads under the Windows

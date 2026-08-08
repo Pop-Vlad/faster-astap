@@ -1,5 +1,5 @@
 // The file half of SpiralService, matching solve_service_files.cpp: read an
-// image, solve it, write the .ini and the .wcs. Split out for the same reason —
+// image, solve it, write the .ini and the .wcs. Split out for the same reason -
 // this is the only part that needs an image decoder.
 
 #include <chrono>
@@ -15,7 +15,8 @@ namespace astap {
     const auto t_start = Clock::now();
     const std::string out_base = r.output_base.empty() ? r.filename : r.output_base;
 
-    std::vector<std::string> pre;
+    std::vector<std::string>
+    pre;
     auto say = [&](const std::string &m) {
       pre.push_back(m);
       if (progress) progress(m);

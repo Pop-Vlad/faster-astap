@@ -3,7 +3,7 @@
 // Why this exists: `astap_index_solve` spends 1.65 s reading a 2.7 GB ladder and
 // 5 ms solving. For a batch that is the right trade, because the read is paid
 // once for all the images. An imaging application solves one frame at a time,
-// minutes apart, in a separate process each time — so it pays the read every
+// minutes apart, in a separate process each time - so it pays the read every
 // single solve and never sees the 5 ms. This binary splits the two apart.
 //
 // One executable, two roles:
@@ -18,8 +18,8 @@
 // whatever executable its ASTAP setting points at, which is the whole
 // integration.
 //
-// Settings a fixed option set cannot carry — where the star database lives,
-// which depth tiers to hold — come from faster-astap.ini next to the executable.
+// Settings a fixed option set cannot carry - where the star database lives,
+// which depth tiers to hold - come from faster-astap.ini next to the executable.
 // That file is also how the client knows how to start a server itself when none
 // is running, so a solve still succeeds when nobody started one.
 
@@ -74,7 +74,7 @@ namespace {
   std::string sanitise(const std::string &v) {
     std::string out;
     out.reserve(v.size());
-    for (char c : v)
+    for (char c: v)
       if (c != '\n' && c != '\r') out += c;
     return out;
   }
@@ -83,13 +83,14 @@ namespace {
   public:
     void set(const std::string &k, const std::string &v) { items_.emplace_back(k, sanitise(v)); }
     void set(const std::string &k, long long v) { set(k, std::to_string(v)); }
+
     void set(const std::string &k, double v, int decimals) {
       set(k, astap::float_to_str(v, decimals));
     }
 
     std::string encode() const {
       std::string s;
-      for (const auto &kv : items_) s += kv.first + "=" + kv.second + "\n";
+      for (const auto &kv: items_) s += kv.first + "=" + kv.second + "\n";
       return s;
     }
 
@@ -109,7 +110,7 @@ namespace {
     }
 
     std::string get(const std::string &k, const std::string &fallback = "") const {
-      for (const auto &kv : items_)
+      for (const auto &kv: items_)
         if (kv.first == k) return kv.second;
       return fallback;
     }
@@ -131,7 +132,7 @@ namespace {
 
     std::vector<std::string> all(const std::string &k) const {
       std::vector<std::string> out;
-      for (const auto &kv : items_)
+      for (const auto &kv: items_)
         if (kv.first == k) out.push_back(kv.second);
       return out;
     }
@@ -170,14 +171,14 @@ namespace {
     std::string database_path;
     std::string database = "auto";
     double tolerance = 0.007;
-    std::string tiers;    // empty selects the default ladder
-    double max_tier = 0;  // raises the ceiling of the default ladder
+    std::string tiers; // empty selects the default ladder
+    double max_tier = 0; // raises the ceiling of the default ladder
     std::string cache;
     std::string endpoint;
     std::string logfile;
     int threads = 0;
     bool autostart = true;
-    int idle_exit_minutes = 0;  // 0 leaves a server up until it is told to stop
+    int idle_exit_minutes = 0; // 0 leaves a server up until it is told to stop
   };
 
   Config read_config(const std::string &path) {
@@ -243,7 +244,7 @@ namespace {
       args.push_back(config_path);
     }
     std::vector<char *> argv;
-    for (std::string &a : args) argv.push_back(const_cast<char *>(a.c_str()));
+    for (std::string &a: args) argv.push_back(const_cast<char *>(a.c_str()));
     argv.push_back(nullptr);
     pid_t pid = 0;
     if (posix_spawn(&pid, exe.c_str(), nullptr, nullptr, argv.data(), environ) != 0) {
@@ -259,7 +260,8 @@ namespace {
   class ServerApp {
   public:
     ServerApp(astap::SolveService &service, const Config &config)
-        : service_(service), config_(config), started_(Clock::now()), last_request_(Clock::now()) {}
+      : service_(service), config_(config), started_(Clock::now()), last_request_(Clock::now()) {
+    }
 
     std::string handle(const std::string &raw) {
       const Message req = Message::decode(raw);
@@ -342,9 +344,9 @@ namespace {
         m.set("refined", out.refined ? 1 : 0);
         m.set("sip", out.sip.valid ? 1 : 0);
       }
-      for (const std::string &line : out.messages) m.set("msg", line);
+      for (const std::string &line: out.messages) m.set("msg", line);
       if (!progress)
-        for (const std::string &line : out.messages) log(line);
+        for (const std::string &line: out.messages) log(line);
       return m;
     }
 
@@ -361,7 +363,7 @@ namespace {
       m.set("quads", static_cast<long long>(service_.quad_count()));
       m.set("bytes", static_cast<long long>(service_.bytes()));
       std::string list;
-      for (double d : service_.densities()) {
+      for (double d: service_.densities()) {
         if (!list.empty()) list += ",";
         list += astap::float_to_str(d, 1);
       }
@@ -412,7 +414,7 @@ namespace {
   // True only when the process was seen to end. "Could not watch it" has to be
   // told apart from "it ended", or a server that is merely unable to open a
   // handle shuts itself down while the application it belongs to is running
-  // perfectly well — the failure would look exactly like the thing it is
+  // perfectly well - the failure would look exactly like the thing it is
   // guarding against.
 #ifdef _WIN32
   bool wait_for_process_exit(unsigned long pid, const std::atomic<bool> &give_up,
@@ -601,8 +603,8 @@ namespace {
         "  maxtier  = 3600                       deepen the default ladder instead\n"
         "  tolerance, cache, endpoint, logfile, threads, autostart, idle_exit_minutes\n"
         "\n"
-     << "Image files read by this build: " << astap::supported_image_extensions() << "\n"
-     << "\n"
+        << "Image files read by this build: " << astap::supported_image_extensions() << "\n"
+        << "\n"
         "Exit status: 0 no errors, 1 no solution, 2 not enough stars detected,\n"
         "16 error reading the image file, 32 no star database found,\n"
         "33 error reading the star database.\n";
@@ -628,11 +630,11 @@ int main(int argc, char **argv) {
   // another program, with an option set that belongs to that program and can
   // gain an entry in any release. Treating an unknown option as a flag would
   // leave its value standing as a bare token, and a bare token here means an
-  // image to solve — so a future `-newthing 30` would have this trying to solve
+  // image to solve - so a future `-newthing 30` would have this trying to solve
   // a file called "30". An unknown option therefore still swallows a following
   // value, which is the conservative reading when the caller is a machine.
   auto in_list = [](const std::string &k, std::initializer_list<const char *> names) {
-    for (const char *n : names)
+    for (const char *n: names)
       if (k == n) return true;
     return false;
   };
@@ -640,13 +642,17 @@ int main(int argc, char **argv) {
   // N.I.N.A. passes them and they take a value; the index solver needs no start
   // position, so nothing reads them.
   auto takes_value = [&](const std::string &k) {
-    return in_list(k, {"f", "d", "D", "fov", "s", "t", "m", "z", "o", "i", "tiers", "maxtier",
-                       "threads", "config", "endpoint", "idle-exit", "parent", "r", "ra", "spd"});
+    return in_list(k, {
+                     "f", "d", "D", "fov", "s", "t", "m", "z", "o", "i", "tiers", "maxtier",
+                     "threads", "config", "endpoint", "idle-exit", "parent", "r", "ra", "spd"
+                   });
   };
   auto is_flag = [&](const std::string &k) {
-    return in_list(k, {"serve", "stop", "status", "quiet", "wcs", "sip", "norefine", "log",
-                       "progress", "noautostart", "nofallback", "rebuild", "nocache", "h",
-                       "-help"});
+    return in_list(k, {
+                     "serve", "stop", "status", "quiet", "wcs", "sip", "norefine", "log",
+                     "progress", "noautostart", "nofallback", "rebuild", "nocache", "h",
+                     "-help"
+                   });
   };
   // A token starting with a dash is a value only when it is a negative number.
   auto looks_like_value = [](const char *s) {
@@ -700,9 +706,11 @@ int main(int argc, char **argv) {
   if (has("idle-exit")) config.idle_exit_minutes = std::atoi(val("idle-exit").c_str());
   if (has("noautostart")) config.autostart = false;
 
-  const std::string endpoint = has("endpoint")  ? val("endpoint")
-                               : !config.endpoint.empty() ? config.endpoint
-                                                          : astap::ipc::default_endpoint();
+  const std::string endpoint = has("endpoint")
+                                 ? val("endpoint")
+                                 : !config.endpoint.empty()
+                                     ? config.endpoint
+                                     : astap::ipc::default_endpoint();
 
   if (has("serve"))
     return run_server(config, endpoint, has("quiet"),
@@ -723,13 +731,13 @@ int main(int argc, char **argv) {
       return 0;
     }
     std::cout << "endpoint:  " << endpoint << "\n"
-              << "pid:       " << m.get("pid") << "\n"
-              << "database:  " << m.get("database") << " in " << m.get("database_path") << "\n"
-              << "cache:     " << m.get("cache") << "\n"
-              << "resident:  " << m.get("tiers") << " tiers, " << m.get("quads") << " quads, "
-              << astap::float_to_str(m.number("bytes", 0) / 1e9, 2) << " GB\n"
-              << "tiers:     " << m.get("densities") << "\n"
-              << "solves:    " << m.get("solves");
+        << "pid:       " << m.get("pid") << "\n"
+        << "database:  " << m.get("database") << " in " << m.get("database_path") << "\n"
+        << "cache:     " << m.get("cache") << "\n"
+        << "resident:  " << m.get("tiers") << " tiers, " << m.get("quads") << " quads, "
+        << astap::float_to_str(m.number("bytes", 0) / 1e9, 2) << " GB\n"
+        << "tiers:     " << m.get("densities") << "\n"
+        << "solves:    " << m.get("solves");
     if (!m.get("median_ms").empty())
       std::cout << ", median " << m.get("median_ms") << " ms, last " << m.get("last_ms") << " ms";
     std::cout << "\nuptime:    " << m.get("uptime_seconds") << " sec" << std::endl;
@@ -764,9 +772,9 @@ int main(int argc, char **argv) {
 
   int worst = 0;
   bool server_gone = false;
-  astap::SolveService fallback;  // loaded at most once, and only if it is needed
+  astap::SolveService fallback; // loaded at most once, and only if it is needed
 
-  for (const std::string &filename : images) {
+  for (const std::string &filename: images) {
     Message one = req;
     one.set("file", filename);
 
@@ -791,7 +799,7 @@ int main(int argc, char **argv) {
 
     if (answered) {
       const Message m = Message::decode(reply);
-      for (const std::string &line : m.all("msg")) say(line);
+      for (const std::string &line: m.all("msg")) say(line);
       if (m.get("status") != "ok") {
         worst = std::max(worst, 1);
         continue;
@@ -844,15 +852,15 @@ int main(int argc, char **argv) {
     if (has("progress")) report = say;
     const astap::SolveOutcome out = fallback.solve(r, report);
     if (!has("progress"))
-      for (const std::string &line : out.messages) say(line);
+      for (const std::string &line: out.messages) say(line);
     worst = std::max(worst, out.errorlevel);
   }
 
   if (want_log) {
     std::ofstream lf(
-        astap::change_file_ext(has("o") ? val("o") : images.front(), ".log"));
+      astap::change_file_ext(has("o") ? val("o") : images.front(), ".log"));
     lf << cmdline << "\n";
-    for (const std::string &l : log_lines) lf << l << "\n";
+    for (const std::string &l: log_lines) lf << l << "\n";
   }
   return worst;
 }

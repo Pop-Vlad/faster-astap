@@ -91,8 +91,9 @@ namespace astap {
             const png_bytep p = src + (static_cast<size_t>(x) * channels + k) * (depth / 8);
             // 16 bit samples arrive most significant byte first, whatever the
             // byte order of this machine.
-            dst[x] = depth == 16 ? static_cast<float>((p[0] << 8) | p[1])
-                                 : static_cast<float>(p[0] * 257);
+            dst[x] = depth == 16
+                       ? static_cast<float>((p[0] << 8) | p[1])
+                       : static_cast<float>(p[0] * 257);
           }
         }
       }

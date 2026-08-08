@@ -6,14 +6,14 @@ and asks for MADV_RANDOM (src/quad_index.cpp), so a tier page is fetched only
 when a query reaches it. Warm, that is the whole point: a run touches a few per
 cent of a multi-gigabyte cache and finishes in milliseconds. Cold, every touched
 page is its own synchronous fault, and the run time becomes the fault count
-times the drive's queue-depth-1 latency — which is why the interesting number
+times the drive's queue-depth-1 latency - which is why the interesting number
 here is not seconds but *how much of the index a run touches*.
 
 The failure path is what this tool exists for. A solve stops at the depth tier
 that matches; a solve that finds nothing sweeps the whole ladder, so it touches
 an order of magnitude more of the index than a success does. Whether that is
 acceptable is a question about the cold case only, and the cold case cannot be
-measured by rerunning the solver — the first run leaves the pages behind.
+measured by rerunning the solver - the first run leaves the pages behind.
 
 So each image is measured twice: best of N warm runs, then one run with the
 index evicted from the page cache with posix_fadvise(DONTNEED). Major faults

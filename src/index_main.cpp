@@ -78,8 +78,8 @@ namespace {
         "\n"
         "The solver result is written to filename.ini and, with -wcs, to filename.wcs.\n"
         "\n"
-     << "Image files read by this build: " << astap::supported_image_extensions() << "\n"
-     << "\n"
+        << "Image files read by this build: " << astap::supported_image_extensions() << "\n"
+        << "\n"
         "Exit status: 0 no errors, 1 no solution, 2 not enough stars detected,\n"
         "16 error reading the image file, 32 no star database found,\n"
         "33 error reading the star database.\n";
@@ -102,21 +102,25 @@ int main(int argc, char **argv) {
   // Which option takes a value has to be stated, not guessed. Guessing it as
   // "the next token, unless it starts with a dash" reads
   // `astap_index_solve -progress a.fits b.fits` as -progress=a.fits and then
-  // solves only b.fits — an image silently dropped, which is the worst way to
+  // solves only b.fits - an image silently dropped, which is the worst way to
   // get this wrong. An unknown option is a flag and says so, so that a typo like
   // -maxtiers does not quietly leave the default ladder in place.
   auto in_list = [](const std::string &k, std::initializer_list<const char *> names) {
-    for (const char *n : names)
+    for (const char *n: names)
       if (k == n) return true;
     return false;
   };
   auto takes_value = [&](const std::string &k) {
-    return in_list(k, {"f", "d", "D", "fov", "s", "t", "m", "z", "o", "i", "tiers", "maxtier",
-                       "threads"});
+    return in_list(k, {
+                     "f", "d", "D", "fov", "s", "t", "m", "z", "o", "i", "tiers", "maxtier",
+                     "threads"
+                   });
   };
   auto is_flag = [&](const std::string &k) {
-    return in_list(k, {"sip", "norefine", "wcs", "log", "progress", "rebuild", "nocache",
-                       "cacheinfo", "h", "-help"});
+    return in_list(k, {
+                     "sip", "norefine", "wcs", "log", "progress", "rebuild", "nocache",
+                     "cacheinfo", "h", "-help"
+                   });
   };
   // A token starting with a dash is a value only when it is a negative number.
   auto looks_like_value = [](const char *s) {
@@ -181,29 +185,29 @@ int main(int argc, char **argv) {
     if (!ss.database_path.empty()) {
       have_db = db.select(astap::with_separator(ss.database_path), ss.database, 1.0);
     } else {
-      for (const std::string &dir : astap::default_database_directories())
+      for (const std::string &dir: astap::default_database_directories())
         if ((have_db = db.select(astap::with_separator(dir), ss.database, 1.0))) break;
     }
     const std::string db_name = have_db ? db.name() : "unknown";
     const int db_type = have_db ? db.database_type() : 0;
     const std::string ladder_file =
         ss.index_cache.empty()
-            ? astap::default_index_cache_path(db_name, db_type, ss.quad_tolerance)
-            : ss.index_cache;
+          ? astap::default_index_cache_path(db_name, db_type, ss.quad_tolerance)
+          : ss.index_cache;
 
     std::cout << "star database: "
-              << (have_db ? db.name() + " in " + db.path() : std::string("(none found)"))
-              << "\nladder wanted:";
-    for (double d : ss.ladder) std::cout << " " << d;
+        << (have_db ? db.name() + " in " + db.path() : std::string("(none found)"))
+        << "\nladder wanted:";
+    for (double d: ss.ladder) std::cout << " " << d;
     std::cout << "\n";
     astap::QuadIndexFile info;
     std::string err;
     double total = 0;
-    for (double d : ss.ladder) {
+    for (double d: ss.ladder) {
       const std::string path =
           ss.index_cache.empty()
-              ? astap::index_tier_cache_path(db_name, db_type, ss.quad_tolerance, d)
-              : ladder_file;
+            ? astap::index_tier_cache_path(db_name, db_type, ss.quad_tolerance, d)
+            : ladder_file;
       if (astap::read_index_file_header(path, info, &err)) {
         std::cout << "  tier " << d << ": " << info.bytes / 1e9 << " GB  " << path << "\n";
         total += info.bytes / 1e9;
@@ -215,8 +219,8 @@ int main(int argc, char **argv) {
     // The pre-split layout, still read when it is there.
     if (ss.index_cache.empty() && astap::read_index_file_header(ladder_file, info, &err)) {
       std::cout << "  a ladder file from before the tiers were split is also present ("
-                << info.densities.size() << " tiers, " << info.bytes / 1e9
-                << " GB): " << ladder_file << "\n";
+          << info.densities.size() << " tiers, " << info.bytes / 1e9
+          << " GB): " << ladder_file << "\n";
     }
     std::cout << "  total " << total << " GB\n";
     return 0;
@@ -230,7 +234,7 @@ int main(int argc, char **argv) {
   // --- get an index ----------------------------------------------------------
   astap::SolveService service;
   if (!service.load(ss, log)) {
-    for (const std::string &f : images) {
+    for (const std::string &f: images) {
       astap::Header head;
       astap::write_ini(astap::change_file_ext(has("o") ? val("o") : f, ".ini"), false, head,
                        cmdline, astap::kErrNoStarDatabase, "");
@@ -240,7 +244,7 @@ int main(int argc, char **argv) {
 
   // --- solve ------------------------------------------------------------------
   int worst = 0;
-  for (const std::string &filename : images) {
+  for (const std::string &filename: images) {
     astap::SolveRequest req;
     req.filename = filename;
     req.output_base = has("o") ? val("o") : "";
@@ -257,7 +261,7 @@ int main(int argc, char **argv) {
     // to interleave, so the summary is printed once the image is done.
     const astap::SolveOutcome out = service.solve(req, progress ? log : astap::LogFn());
     if (!progress)
-      for (const std::string &m : out.messages) log(m);
+      for (const std::string &m: out.messages) log(m);
 
     worst = std::max(worst, out.errorlevel);
   }
@@ -265,7 +269,7 @@ int main(int argc, char **argv) {
   if (want_log) {
     std::ofstream lf(astap::change_file_ext(has("o") ? val("o") : images.front(), ".log"));
     lf << cmdline << "\n";
-    for (const std::string &l : log_lines) lf << l << "\n";
+    for (const std::string &l: log_lines) lf << l << "\n";
   }
   return worst;
 }

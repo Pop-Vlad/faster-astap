@@ -98,7 +98,8 @@ namespace astap {
 
   // Windows offers PrefetchVirtualMemory, which is the opposite request, and no
   // way to say "do not read ahead". Nothing to do.
-  void MappedFile::advise_random() const {}
+  void MappedFile::advise_random() const {
+  }
 
 #else
 

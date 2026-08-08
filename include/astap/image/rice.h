@@ -28,7 +28,7 @@
 namespace astap {
   // How the tiles of the primary data column are encoded.
   enum class TileCodec {
-    rice,  // ZCMPTYPE = 'RICE_1'
+    rice, // ZCMPTYPE = 'RICE_1'
     gzip1, // ZCMPTYPE = 'GZIP_1', the byte stream of the values
     gzip2, // ZCMPTYPE = 'GZIP_2', the same with the value bytes shuffled
   };
@@ -44,10 +44,10 @@ namespace astap {
     TileCodec codec = TileCodec::rice;
     // Source buffers, owned by the caller.
     const uint8_t *table_buffer = nullptr; // the NAXIS1 * NAXIS2 table rows
-    const uint8_t *heap_buffer = nullptr;  // the PCOUNT byte heap, may be null
+    const uint8_t *heap_buffer = nullptr; // the PCOUNT byte heap, may be null
     long long heap_size = 0;
     int table_rowwidth = 0; // NAXIS1, bytes per row
-    int table_rows = 0;     // NAXIS2, number of rows = number of tiles
+    int table_rows = 0; // NAXIS2, number of rows = number of tiles
 
     // Tile grid and image geometry.
     int tiles_x = 0, tiles_y = 0, tiles_z = 0;
@@ -79,17 +79,17 @@ namespace astap {
   struct RiceDecodeStatus {
     float measured_max = 0;
     float measured_min = 0;
-    bool err_gzip = false;   // a GZIP tile was met and this build cannot inflate
+    bool err_gzip = false; // a GZIP tile was met and this build cannot inflate
     bool err_decode = false; // rice_decode failed on a tile
-    bool err_range = false;  // a heap descriptor pointed outside the heap
-    int err_tile = -1;       // first tile with a decode or range problem
+    bool err_range = false; // a heap descriptor pointed outside the heap
+    int err_tile = -1; // first tile with a decode or range problem
     std::string err_msg;
   };
 
   // CFITSIO's 10000 entry random value table (fits_init_randoms), a Park-Miller
   // minimal standard generator seeded with 1. Needed for the dithered
   // quantisation modes.
-  void build_dither_table(std::vector<float> &table);
+  void build_dither_table(std::vector<float> & table);
 
   // Decodes and places every tile of a RICE_1 compressed image into `img`,
   // which must already be sized [naxis3][height][width].

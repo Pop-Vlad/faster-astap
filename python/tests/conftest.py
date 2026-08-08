@@ -9,12 +9,10 @@ the things it can actually check.
 
 from __future__ import annotations
 
-import os
-from pathlib import Path
-
-import pytest
-
 import faster_astap as fa
+import os
+import pytest
+from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[2]
 
@@ -44,8 +42,8 @@ def database() -> str:
 def image_path() -> str:
     """A corpus image around a degree across, which both solvers handle well.
 
-    The corpus deliberately contains sizes nothing can solve — 0.05 degree
-    cutouts are down to a handful of stars — so picking by name matters.
+    The corpus deliberately contains sizes nothing can solve - 0.05 degree
+    cutouts are down to a handful of stars - so picking by name matters.
     """
     for directory in (REPO / "corpus", REPO / "build" / "mini-corpus"):
         if not directory.is_dir():
@@ -66,7 +64,7 @@ def _fov_from_name(name: str) -> float:
         return 0.0
     start = name.rfind("_", 0, marker)
     try:
-        return float(name[start + 1 : marker])
+        return float(name[start + 1: marker])
     except ValueError:
         return 0.0
 

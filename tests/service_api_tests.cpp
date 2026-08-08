@@ -44,7 +44,7 @@ static void same_position(const Header &a, const Header &b, const std::string &w
 
 int main() {
   bool have_db = false;
-  for (const std::string &dir : default_database_directories()) {
+  for (const std::string &dir: default_database_directories()) {
     StarDatabase probe;
     if (probe.select(with_separator(dir), "auto", 1.0)) {
       have_db = true;
@@ -57,15 +57,15 @@ int main() {
   }
 
   // The corpus is a capability grid, so a good part of it is images nothing can
-  // solve on purpose — the 0.05 degree cutouts are down to a handful of stars
+  // solve on purpose - the 0.05 degree cutouts are down to a handful of stars
   // and are there to fix where the floor is, and at 10 degrees the port's own
   // field size sweep gives up. This test is not about which images solve, so it
   // wants one both solvers are comfortable with: around a degree, which is the
   // middle of the range for both and quick either way. The corpus tool names
   // them <field>_<survey>_<fov>deg.fits; anything else keeps its place.
-  std::vector<std::pair<double, std::string>> candidates;
+  std::vector<std::pair<double, std::string> > candidates;
   std::error_code ec;
-  for (const auto &e : std::filesystem::directory_iterator(ASTAP_TEST_CORPUS_DIR, ec)) {
+  for (const auto &e: std::filesystem::directory_iterator(ASTAP_TEST_CORPUS_DIR, ec)) {
     const std::string n = e.path().filename().string();
     if (n.size() <= 5 || n.compare(n.size() - 5, 5, ".fits") != 0) continue;
     double fov = 0;
@@ -158,7 +158,7 @@ int main() {
     // convenience: unlike the index solver, which takes the field size from its
     // parameters, the port reads the plate scale out of the header to decide
     // what field size to search for. Handing it header_for_image() instead is a
-    // different question — a blind solve — and would rightly give a different
+    // different question - a blind solve - and would rightly give a different
     // answer, so it would not test what this is testing.
     Header head = file_head;
     const SolveOutcome port_array = port.solve_image(img, head, SpiralParams{});

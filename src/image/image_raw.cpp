@@ -45,7 +45,7 @@ namespace astap {
       const libraw_image_sizes_t &sizes = raw.imgdata.sizes;
       if (data.raw_image == nullptr) {
         res.error = "Error, this raw file holds no single channel sensor image "
-                    "(Foveon and already demosaiced files are not supported).";
+            "(Foveon and already demosaiced files are not supported).";
         return res;
       }
 

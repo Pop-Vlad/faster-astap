@@ -9,7 +9,7 @@
 // The gate applies where the ladder under test can reach. An index tier only
 // matches an image whose detected star density is within about a factor of two
 // of the tier's own, so a ladder covers [sparsest/2, deepest*2] and an image
-// outside that has nothing to match against — the miss is a fact about the
+// outside that has nothing to match against - the miss is a fact about the
 // ladder, not about the solver. Those images are still solved, timed and
 // printed, they just do not fail the gate; the corpus deliberately contains
 // them, because the small deep fields sit above the default ladder's 900
@@ -68,8 +68,8 @@ namespace {
   // The 60 arcsec floor this used to carry was harmless while the corpus started
   // at 0.5 degrees and absurd once it reached 0.05: it is a sixth of a 0.1 degree
   // frame, so a solve landing most of a frame away would have counted. No result
-  // in the corpus was ever within a factor of five of it — every solve is well
-  // inside two percent — so removing it changes no number, it removes a way for
+  // in the corpus was ever within a factor of five of it - every solve is well
+  // inside two percent - so removing it changes no number, it removes a way for
   // a future wrong answer to pass.
   double correct_within_arcsec(double fov_deg, double scale_arcsec_px) {
     return std::max(0.02 * fov_deg * 3600, 3 * scale_arcsec_px);
@@ -86,20 +86,20 @@ namespace {
 
   struct ImageCase {
     std::string file;
-    int width = 0, height = 0;         // original
-    int bwidth = 0, bheight = 0;       // binned, what the index solver sees
-    double true_ra = 0, true_dec = 0;  // radians, from the file's own WCS
-    double true_scale = 0;             // arcsec per pixel, original pixels
+    int width = 0, height = 0; // original
+    int bwidth = 0, bheight = 0; // binned, what the index solver sees
+    double true_ra = 0, true_dec = 0; // radians, from the file's own WCS
+    double true_scale = 0; // arcsec per pixel, original pixels
     double fov_deg = 0;
     size_t nstars = 0;
-    double density = 0;   // detected stars per square degree
+    double density = 0; // detected stars per square degree
     bool in_range = true; // density a tier of the ladder under test can reach
     RowList stars;
 
     // Port
     bool port_solved = false;
     bool port_good = false;
-    double port_error = 0;  // arcsec from truth
+    double port_error = 0; // arcsec from truth
     double port_secs = 0;
     double port_scale = 0;
 
@@ -113,7 +113,7 @@ namespace {
     bool idx_many = false;
     bool idx_refined = false;
     int idx_refine_quads = 0;
-    double idx_res_before = -1, idx_res_after = -1;  // arcsec, same references
+    double idx_res_before = -1, idx_res_after = -1; // arcsec, same references
     std::string idx_reason;
   };
 
@@ -142,8 +142,8 @@ namespace {
 int main(int argc, char **argv) {
   if (argc < 3) {
     std::printf(
-        "usage: corpus_harness <corpus dir> <database dir> [--density 100,200,300] [--hint]\n"
-        "                      [--csv out.csv] [--limit N] [--filter substring] [--tol x]\n");
+      "usage: corpus_harness <corpus dir> <database dir> [--density 100,200,300] [--hint]\n"
+      "                      [--csv out.csv] [--limit N] [--filter substring] [--tol x]\n");
     return 2;
   }
   const std::string corpus = argv[1];
@@ -200,14 +200,14 @@ int main(int argc, char **argv) {
     return 1;
   }
   std::printf("%zu images, densities:", files.size());
-  for (double d : densities) std::printf(" %.0f", d);
+  for (double d: densities) std::printf(" %.0f", d);
   std::printf(", %s\n", hint ? "hinted" : "blind");
   std::printf("the ladder covers %.1f to %.0f detected stars/deg^2; the gate applies there\n\n",
               covered_lo, covered_hi);
 
   // --- pass 1: image stages and the port -------------------------------------
   std::vector<ImageCase> cases;
-  for (const std::string &f : files) {
+  for (const std::string &f: files) {
     ImageCase c;
     c.file = f;
 
@@ -251,8 +251,8 @@ int main(int argc, char **argv) {
     find_stars(small, bhead, 0.8, 500, stars, mean_hfd);
     c.nstars = stars.count();
     c.density = c.nstars / std::max(1e-9, static_cast<double>(c.fov_deg) * c.fov_deg *
-                                              (std::min(c.width, c.height) /
-                                               static_cast<double>(std::max(c.width, c.height))));
+                                          (std::min(c.width, c.height) /
+                                           static_cast<double>(std::max(c.width, c.height))));
     c.in_range = c.density >= covered_lo && c.density <= covered_hi;
     c.stars = stars;
 
@@ -266,7 +266,7 @@ int main(int argc, char **argv) {
     }
     Header phead = head;
     if (!hint) {
-      phead.ra0 = 0;  // blind: the solver may not start from the answer
+      phead.ra0 = 0; // blind: the solver may not start from the answer
       phead.dec0 = 0;
     }
     Solver solver(ss);
@@ -305,7 +305,7 @@ int main(int argc, char **argv) {
   }
   const double build_secs = secs(t0, Clock::now());
   size_t total_quads = 0, total_bytes = 0;
-  for (const QuadIndex &ix : tiers) {
+  for (const QuadIndex &ix: tiers) {
     total_quads += ix.size();
     total_bytes += ix.bytes();
     std::printf("  tier @%-6.0f %9zu quads %6.0f MB\n", ix.settings().star_density, ix.size(),
@@ -314,7 +314,7 @@ int main(int argc, char **argv) {
   std::printf("ladder: %zu tiers, %zu quads, %.1f GB, built in %.2f s\n\n", tiers.size(),
               total_quads, total_bytes / 1e9, build_secs);
 
-  for (ImageCase &c : cases) {
+  for (ImageCase &c: cases) {
     IndexSolveSettings is;
     auto s0 = Clock::now();
     // No density hint: this is the blind case, where the field size is unknown
@@ -347,7 +347,7 @@ int main(int argc, char **argv) {
 
   int port_ok = 0, idx_ok = 0, gate_fail = 0, past_ladder = 0, past_ladder_miss = 0;
   double port_time = 0, idx_time = 0;
-  for (const ImageCase &c : cases) {
+  for (const ImageCase &c: cases) {
     std::printf("%-42s %6.2f %6zu %7.0f | ", basename_of(c.file).c_str(), c.fov_deg, c.nstars,
                 c.density);
     if (c.port_good) {
@@ -393,16 +393,16 @@ int main(int argc, char **argv) {
   if (!csv.empty()) {
     std::ofstream f(csv);
     f << "image,fov_deg,stars,density,in_ladder_range,port_solved,port_error_arcsec,port_secs,"
-         "idx_solved,idx_error_arcsec,idx_secs,idx_tier,idx_inliers,idx_tiers_tried,"
-         "idx_many_quads,idx_refined,idx_refine_quads,idx_res_before,idx_res_after,"
-         "idx_reason\n";
-    for (const ImageCase &c : cases)
+        "idx_solved,idx_error_arcsec,idx_secs,idx_tier,idx_inliers,idx_tiers_tried,"
+        "idx_many_quads,idx_refined,idx_refine_quads,idx_res_before,idx_res_after,"
+        "idx_reason\n";
+    for (const ImageCase &c: cases)
       f << basename_of(c.file) << "," << c.fov_deg << "," << c.nstars << "," << c.density << ","
-        << c.in_range << "," << c.port_good << "," << c.port_error << "," << c.port_secs << ","
-        << c.idx_solved << "," << c.idx_error << "," << c.idx_secs << "," << c.idx_tier << ","
-        << c.idx_inliers << "," << c.idx_tiers_tried << "," << c.idx_many << ","
-        << c.idx_refined << "," << c.idx_refine_quads << "," << c.idx_res_before << ","
-        << c.idx_res_after << ",\"" << c.idx_reason << "\"\n";
+          << c.in_range << "," << c.port_good << "," << c.port_error << "," << c.port_secs << ","
+          << c.idx_solved << "," << c.idx_error << "," << c.idx_secs << "," << c.idx_tier << ","
+          << c.idx_inliers << "," << c.idx_tiers_tried << "," << c.idx_many << ","
+          << c.idx_refined << "," << c.idx_refine_quads << "," << c.idx_res_before << ","
+          << c.idx_res_after << ",\"" << c.idx_reason << "\"\n";
     std::printf("wrote %s\n", csv.c_str());
   }
   return gate_fail == 0 ? 0 : 1;

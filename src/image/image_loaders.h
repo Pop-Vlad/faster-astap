@@ -15,10 +15,15 @@
 namespace astap {
   namespace imageio {
     ImageLoadResult load_pnm(const std::string &filename, Header &head, ImageArray &img);
+
     ImageLoadResult load_bmp(const std::string &filename, Header &head, ImageArray &img);
+
     ImageLoadResult load_png(const std::string &filename, Header &head, ImageArray &img);
+
     ImageLoadResult load_jpeg(const std::string &filename, Header &head, ImageArray &img);
+
     ImageLoadResult load_tiff(const std::string &filename, Header &head, ImageArray &img);
+
     ImageLoadResult load_raw(const std::string &filename, Header &head, ImageArray &img);
 
     // The minimal FITS header astap_cli synthesises for an image that carries

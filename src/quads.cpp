@@ -166,8 +166,8 @@ namespace astap {
     // Duplicate rejection by star set.
     //
     // A quad is a duplicate when the same four stars are reached from different
-    // reference stars. The original detects that spatially — it drops a
-    // candidate whose centre lies within one pixel of an already accepted one —
+    // reference stars. The original detects that spatially - it drops a
+    // candidate whose centre lies within one pixel of an already accepted one -
     // which is a greedy scan and so depends on visiting order, the one step of
     // quad building that cannot be parallelised.
     //

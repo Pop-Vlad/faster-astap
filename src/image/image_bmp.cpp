@@ -219,9 +219,11 @@ namespace astap {
               green = row[static_cast<size_t>(x) * 3 + 1];
               red = row[static_cast<size_t>(x) * 3 + 2];
               break;
-            default: { // 16 and 32 bit, through the channel masks
-              const uint32_t v = bpp == 16 ? le16(&row[static_cast<size_t>(x) * 2])
-                                           : le32(&row[static_cast<size_t>(x) * 4]);
+            default: {
+              // 16 and 32 bit, through the channel masks
+              const uint32_t v = bpp == 16
+                                   ? le16(&row[static_cast<size_t>(x) * 2])
+                                   : le32(&row[static_cast<size_t>(x) * 4]);
               r[x] = expand((v & rmask) >> rshift, rbits);
               g[x] = expand((v & gmask) >> gshift, gbits);
               b[x] = expand((v & bmask) >> bshift, bbits);

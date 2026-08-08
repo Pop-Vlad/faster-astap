@@ -460,10 +460,14 @@ namespace astap {
         // handles 1, 2 and 4 byte pixels; a GZIP tile may also hold 8 byte
         // doubles, since it stores the values rather than encoding them.
         switch (std::abs(zbitpix)) {
-          case 8: bytepix = 1; break;
-          case 16: bytepix = 2; break;
-          case 64: bytepix = codec == TileCodec::rice ? 4 : 8; break;
-          default: bytepix = 4; break;
+          case 8: bytepix = 1;
+            break;
+          case 16: bytepix = 2;
+            break;
+          case 64: bytepix = codec == TileCodec::rice ? 4 : 8;
+            break;
+          default: bytepix = 4;
+            break;
         }
       }
       const bool bytepix_ok =

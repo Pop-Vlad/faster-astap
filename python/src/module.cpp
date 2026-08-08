@@ -6,7 +6,7 @@
 // the command line front ends call. Everything that could be written in Python
 // is, in faster_astap/; what is here is what cannot be.
 //
-// Neither service is thread safe — the workers, their database handles and the
+// Neither service is thread safe - the workers, their database handles and the
 // tile caches belong to one instance — so every entry point takes a per instance
 // mutex. That makes concurrent calls safe rather than parallel; a caller wanting
 // parallelism should hold one solver per thread.
@@ -66,7 +66,7 @@ namespace {
         channels_last = true;
       } else {
         throw py::value_error("a 3 dimensional image must be (colours, height, width) or "
-                              "(height, width, colours), with at most 4 colours");
+          "(height, width, colours), with at most 4 colours");
       }
     } else {
       throw py::value_error("expected a 2 or 3 dimensional image, got " +
@@ -89,9 +89,9 @@ namespace {
       if (src[i] > peak) peak = src[i];
     if (peak > 0 && peak <= 1.0)
       throw py::value_error(
-          "the image peaks at " + std::to_string(peak) +
-          ", which looks like it was normalised to 0..1. Star detection works on the scale the "
-          "detector produced (0..65535); multiply by 65535 if that is what happened.");
+        "the image peaks at " + std::to_string(peak) +
+        ", which looks like it was normalised to 0..1. Star detection works on the scale the "
+        "detector produced (0..65535); multiply by 65535 if that is what happened.");
 
     ImageArray img(colours, height, width);
     for (int c = 0; c < colours; c++)
@@ -130,7 +130,7 @@ namespace {
   // Both services get the same wrapper: a lock, and the GIL dropped around
   // anything that takes real time. Named for what it is rather than what it
   // does, because astap::Solver is already a thing and this is not it.
-  template <typename Service>
+  template<typename Service>
   struct Resident {
     Service service;
     std::mutex mutex;
@@ -200,7 +200,7 @@ PYBIND11_MODULE(_core, m) {
       .def_readonly("cd2_1", &Header::cd2_1)
       .def_readonly("cd2_2", &Header::cd2_2)
       .def_property_readonly("cards", [](const Header &h) { return h.cards; },
-                            "The FITS header cards, when the image came from a file.");
+                             "The FITS header cards, when the image came from a file.");
 
   py::class_<SolveOutcome>(m, "Outcome", "What a solve produced.")
       .def_readonly("solved", &SolveOutcome::solved)
@@ -225,56 +225,56 @@ PYBIND11_MODULE(_core, m) {
   py::class_<Index>(m, "IndexSolver")
       .def(py::init<>())
       .def(
-          "load",
-          [](Index &self, const std::string &database_path, const std::string &database,
-             double quad_tolerance, const std::vector<double> &ladder,
-             const std::string &index_cache, bool use_cache, bool rebuild, const py::object &log) {
-            SolveServiceSettings s;
-            s.database_path = database_path;
-            s.database = database;
-            s.quad_tolerance = quad_tolerance;
-            s.ladder = ladder;
-            s.index_cache = index_cache;
-            s.use_cache = use_cache;
-            s.rebuild = rebuild;
-            const LogFn fn = make_log(log);
-            bool ok;
-            {
-              py::gil_scoped_release unlock;
-              std::lock_guard<std::mutex> lock(self.mutex);
-              ok = self.service.load(s, fn);
-            }
-            self.loaded = ok;
-            return ok;
-          },
-          py::arg("database_path") = "", py::arg("database") = "auto",
-          py::arg("quad_tolerance") = 0.007, py::arg("ladder") = std::vector<double>(),
-          py::arg("index_cache") = "", py::arg("use_cache") = true, py::arg("rebuild") = false,
-          py::arg("log") = py::none())
-      .def(
-          "solve_array",
-          [](Index &self, const FloatArray &a, double fov, int max_stars, double min_star_size,
-             int downsample, bool want_sip, bool refine, const std::string &label,
-             const py::object &progress) {
-            SolveParams p;
-            p.fov = fov;
-            p.max_stars = max_stars;
-            p.min_star_size = min_star_size;
-            p.downsample = downsample;
-            p.want_sip = want_sip;
-            p.refine = refine;
-            p.label = label;
-            // Converted while the GIL is still held: it reads a Python object.
-            ImageArray img = to_image(a);
-            const LogFn fn = make_log(progress);
-            Header head = header_for_image(img);
+        "load",
+        [](Index &self, const std::string &database_path, const std::string &database,
+           double quad_tolerance, const std::vector<double> &ladder,
+           const std::string &index_cache, bool use_cache, bool rebuild, const py::object &log) {
+          SolveServiceSettings s;
+          s.database_path = database_path;
+          s.database = database;
+          s.quad_tolerance = quad_tolerance;
+          s.ladder = ladder;
+          s.index_cache = index_cache;
+          s.use_cache = use_cache;
+          s.rebuild = rebuild;
+          const LogFn fn = make_log(log);
+          bool ok;
+          {
             py::gil_scoped_release unlock;
             std::lock_guard<std::mutex> lock(self.mutex);
-            return self.service.solve_image(img, head, p, fn);
-          },
-          py::arg("image"), py::arg("fov") = 0.0, py::arg("max_stars") = 500,
-          py::arg("min_star_size") = 1.5, py::arg("downsample") = 0, py::arg("want_sip") = false,
-          py::arg("refine") = true, py::arg("label") = "", py::arg("progress") = py::none())
+            ok = self.service.load(s, fn);
+          }
+          self.loaded = ok;
+          return ok;
+        },
+        py::arg("database_path") = "", py::arg("database") = "auto",
+        py::arg("quad_tolerance") = 0.007, py::arg("ladder") = std::vector<double>(),
+        py::arg("index_cache") = "", py::arg("use_cache") = true, py::arg("rebuild") = false,
+        py::arg("log") = py::none())
+      .def(
+        "solve_array",
+        [](Index &self, const FloatArray &a, double fov, int max_stars, double min_star_size,
+           int downsample, bool want_sip, bool refine, const std::string &label,
+           const py::object &progress) {
+          SolveParams p;
+          p.fov = fov;
+          p.max_stars = max_stars;
+          p.min_star_size = min_star_size;
+          p.downsample = downsample;
+          p.want_sip = want_sip;
+          p.refine = refine;
+          p.label = label;
+          // Converted while the GIL is still held: it reads a Python object.
+          ImageArray img = to_image(a);
+          const LogFn fn = make_log(progress);
+          Header head = header_for_image(img);
+          py::gil_scoped_release unlock;
+          std::lock_guard<std::mutex> lock(self.mutex);
+          return self.service.solve_image(img, head, p, fn);
+        },
+        py::arg("image"), py::arg("fov") = 0.0, py::arg("max_stars") = 500,
+        py::arg("min_star_size") = 1.5, py::arg("downsample") = 0, py::arg("want_sip") = false,
+        py::arg("refine") = true, py::arg("label") = "", py::arg("progress") = py::none())
       .def_property_readonly("ready", [](Index &self) { return self.service.ready(); })
       .def_property_readonly("database",
                              [](Index &self) { return self.service.database_name(); })
@@ -294,59 +294,59 @@ PYBIND11_MODULE(_core, m) {
   py::class_<Spiral>(m, "SpiralSolver")
       .def(py::init<>())
       .def(
-          "load",
-          [](Spiral &self, const std::string &database_path, const std::string &database, bool warm,
-             unsigned threads, const py::object &log) {
-            SpiralServiceSettings s;
-            s.database_path = database_path;
-            s.database = database;
-            s.warm = warm;
-            s.threads = threads;
-            const LogFn fn = make_log(log);
-            bool ok;
-            {
-              py::gil_scoped_release unlock;
-              std::lock_guard<std::mutex> lock(self.mutex);
-              ok = self.service.load(s, fn);
-            }
-            self.loaded = ok;
-            return ok;
-          },
-          py::arg("database_path") = "", py::arg("database") = "auto", py::arg("warm") = false,
-          py::arg("threads") = 0u, py::arg("log") = py::none())
-      .def(
-          "solve_array",
-          [](Spiral &self, const FloatArray &a, double ra, double dec, double fov,
-             bool fov_specified, double radius, int max_stars, double quad_tolerance,
-             double min_star_size, int downsample, bool force_oversize, bool check_pattern_filter,
-             bool want_sip, const std::string &label, const py::object &progress) {
-            SpiralParams p;
-            p.ra = ra;
-            p.dec = dec;
-            p.fov = fov;
-            p.fov_specified = fov_specified;
-            p.radius = radius;
-            p.max_stars = max_stars;
-            p.quad_tolerance = quad_tolerance;
-            p.min_star_size = min_star_size;
-            p.downsample = downsample;
-            p.force_oversize = force_oversize;
-            p.check_pattern_filter = check_pattern_filter;
-            p.want_sip = want_sip;
-            p.label = label;
-            ImageArray img = to_image(a);
-            const LogFn fn = make_log(progress);
-            Header head = header_for_image(img);
+        "load",
+        [](Spiral &self, const std::string &database_path, const std::string &database, bool warm,
+           unsigned threads, const py::object &log) {
+          SpiralServiceSettings s;
+          s.database_path = database_path;
+          s.database = database;
+          s.warm = warm;
+          s.threads = threads;
+          const LogFn fn = make_log(log);
+          bool ok;
+          {
             py::gil_scoped_release unlock;
             std::lock_guard<std::mutex> lock(self.mutex);
-            return self.service.solve_image(std::move(img), head, p, fn);
-          },
-          py::arg("image"), py::arg("ra") = 99999.0, py::arg("dec") = 99999.0, py::arg("fov") = 0.0,
-          py::arg("fov_specified") = false, py::arg("radius") = 180.0, py::arg("max_stars") = 500,
-          py::arg("quad_tolerance") = 0.007, py::arg("min_star_size") = 1.5,
-          py::arg("downsample") = 0, py::arg("force_oversize") = false,
-          py::arg("check_pattern_filter") = false, py::arg("want_sip") = false,
-          py::arg("label") = "", py::arg("progress") = py::none())
+            ok = self.service.load(s, fn);
+          }
+          self.loaded = ok;
+          return ok;
+        },
+        py::arg("database_path") = "", py::arg("database") = "auto", py::arg("warm") = false,
+        py::arg("threads") = 0u, py::arg("log") = py::none())
+      .def(
+        "solve_array",
+        [](Spiral &self, const FloatArray &a, double ra, double dec, double fov,
+           bool fov_specified, double radius, int max_stars, double quad_tolerance,
+           double min_star_size, int downsample, bool force_oversize, bool check_pattern_filter,
+           bool want_sip, const std::string &label, const py::object &progress) {
+          SpiralParams p;
+          p.ra = ra;
+          p.dec = dec;
+          p.fov = fov;
+          p.fov_specified = fov_specified;
+          p.radius = radius;
+          p.max_stars = max_stars;
+          p.quad_tolerance = quad_tolerance;
+          p.min_star_size = min_star_size;
+          p.downsample = downsample;
+          p.force_oversize = force_oversize;
+          p.check_pattern_filter = check_pattern_filter;
+          p.want_sip = want_sip;
+          p.label = label;
+          ImageArray img = to_image(a);
+          const LogFn fn = make_log(progress);
+          Header head = header_for_image(img);
+          py::gil_scoped_release unlock;
+          std::lock_guard<std::mutex> lock(self.mutex);
+          return self.service.solve_image(std::move(img), head, p, fn);
+        },
+        py::arg("image"), py::arg("ra") = 99999.0, py::arg("dec") = 99999.0, py::arg("fov") = 0.0,
+        py::arg("fov_specified") = false, py::arg("radius") = 180.0, py::arg("max_stars") = 500,
+        py::arg("quad_tolerance") = 0.007, py::arg("min_star_size") = 1.5,
+        py::arg("downsample") = 0, py::arg("force_oversize") = false,
+        py::arg("check_pattern_filter") = false, py::arg("want_sip") = false,
+        py::arg("label") = "", py::arg("progress") = py::none())
       .def_property_readonly("ready", [](Spiral &self) { return self.service.ready(); })
       .def_property_readonly("database",
                              [](Spiral &self) { return self.service.database_name(); })
@@ -357,35 +357,35 @@ PYBIND11_MODULE(_core, m) {
 
 #ifdef ASTAP_PYTHON_IMAGE_IO
   m.def(
-      "load_image_file",
-      [](const std::string &path) {
-        Header head;
-        ImageArray img;
-        ImageLoadResult lr;
-        {
-          py::gil_scoped_release unlock;
-          lr = load_image(path, head, img);
-        }
-        if (!lr.ok) throw py::value_error(lr.error);
-        // (colours, height, width), which is the solver's own order.
-        py::array_t<float> out({img.colours(), img.height(), img.width()});
-        auto view = out.mutable_unchecked<3>();
-        for (int c = 0; c < img.colours(); c++)
-          for (int y = 0; y < img.height(); y++)
-            for (int x = 0; x < img.width(); x++) view(c, y, x) = img.at(c, y, x);
-        py::dict meta;
-        meta["ra_mount"] = lr.ra_mount;
-        meta["dec_mount"] = lr.dec_mount;
-        meta["focallen"] = lr.focallen;
-        meta["warning"] = lr.warning;
-        meta["cards"] = head.cards;
-        meta["cdelt2"] = head.cdelt2;
-        meta["ra0"] = head.ra0;
-        meta["dec0"] = head.dec0;
-        return py::make_tuple(out, meta);
-      },
-      py::arg("path"),
-      "Reads an image file into a (colours, height, width) array of the pixel values, plus what "
-      "the header said. Raises ValueError when the file cannot be read.");
+    "load_image_file",
+    [](const std::string &path) {
+      Header head;
+      ImageArray img;
+      ImageLoadResult lr;
+      {
+        py::gil_scoped_release unlock;
+        lr = load_image(path, head, img);
+      }
+      if (!lr.ok) throw py::value_error(lr.error);
+      // (colours, height, width), which is the solver's own order.
+      py::array_t<float> out({img.colours(), img.height(), img.width()});
+      auto view = out.mutable_unchecked<3>();
+      for (int c = 0; c < img.colours(); c++)
+        for (int y = 0; y < img.height(); y++)
+          for (int x = 0; x < img.width(); x++) view(c, y, x) = img.at(c, y, x);
+      py::dict meta;
+      meta["ra_mount"] = lr.ra_mount;
+      meta["dec_mount"] = lr.dec_mount;
+      meta["focallen"] = lr.focallen;
+      meta["warning"] = lr.warning;
+      meta["cards"] = head.cards;
+      meta["cdelt2"] = head.cdelt2;
+      meta["ra0"] = head.ra0;
+      meta["dec0"] = head.dec0;
+      return py::make_tuple(out, meta);
+    },
+    py::arg("path"),
+    "Reads an image file into a (colours, height, width) array of the pixel values, plus what "
+    "the header said. Raises ValueError when the file cannot be read.");
 #endif
 }

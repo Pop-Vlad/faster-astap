@@ -430,7 +430,7 @@ namespace astap {
       };
 
       std::mutex mutex_;
-      std::list<std::string> order_;  // most recently used first
+      std::list<std::string> order_; // most recently used first
       std::unordered_map<std::string, Entry> index_;
     };
 
@@ -456,7 +456,8 @@ namespace astap {
       const std::string namefile = name_database_ + "_" + area_filename(database_type_, area);
       area_map_ = area_maps().get(database_path_ + namefile);
       if (!area_map_) return false;
-      if (area_map_->size() < 110) { // 10x11 is 110 bytes
+      if (area_map_->size() < 110) {
+        // 10x11 is 110 bytes
         close();
         return false;
       }

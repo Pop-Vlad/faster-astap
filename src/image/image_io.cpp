@@ -30,10 +30,12 @@ namespace astap {
     // raw support at all; the GUI shells out to dcraw or LibRaw's unprocessed_raw
     // and reads back the resulting PGM, which is what this reproduces in process.
     bool is_raw_extension(const std::string &ext) {
-      return one_of(ext, {".cr2", ".cr3", ".crw", ".nef", ".nrw", ".arw", ".srf", ".sr2",
-                          ".orf", ".rw2", ".raf", ".dng", ".pef", ".raw", ".3fr", ".fff",
-                          ".iiq", ".mos", ".mef", ".mrw", ".erf", ".kdc", ".dcr", ".srw",
-                          ".x3f", ".rwl", ".dcs", ".cap", ".bay"});
+      return one_of(ext, {
+                      ".cr2", ".cr3", ".crw", ".nef", ".nrw", ".arw", ".srf", ".sr2",
+                      ".orf", ".rw2", ".raf", ".dng", ".pef", ".raw", ".3fr", ".fff",
+                      ".iiq", ".mos", ".mef", ".mrw", ".erf", ".kdc", ".dcr", ".srw",
+                      ".x3f", ".rwl", ".dcs", ".cap", ".bay"
+                    });
     }
   } // namespace
 

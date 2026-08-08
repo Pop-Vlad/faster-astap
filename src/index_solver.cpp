@@ -15,10 +15,10 @@
 namespace astap {
   namespace {
     struct Pair {
-      uint32_t iq;   // image quad
-      uint32_t dq;   // database quad
-      double scale;  // d1_database / d1_image, arcsec per pixel
-      long sbin;     // log-space scale bin
+      uint32_t iq; // image quad
+      uint32_t dq; // database quad
+      double scale; // d1_database / d1_image, arcsec per pixel
+      long sbin; // log-space scale bin
     };
 
     // A similarity between image pixels and standard coordinates about some
@@ -31,8 +31,8 @@ namespace astap {
     // with z = x + iy in pixels and z' = xi + i*eta in arcseconds. Sky images
     // come in both parities, so both are tried.
     struct Model {
-      double p = 0, q = 0;    // alpha = p + iq
-      double tx = 0, ty = 0;  // beta
+      double p = 0, q = 0; // alpha = p + iq
+      double tx = 0, ty = 0; // beta
       int parity = 1;
       double scale() const { return std::sqrt(p * p + q * q); }
 
@@ -52,7 +52,7 @@ namespace astap {
     bool model_from(double x1, double y1, double xi1, double eta1, double x2, double y2, double xi2,
                     double eta2, int parity, double min_baseline, Model &m) {
       const double dx = parity > 0 ? x2 - x1 : x2 - x1;
-      const double dy = parity > 0 ? y2 - y1 : -(y2 - y1);  // conj for the mirrored case
+      const double dy = parity > 0 ? y2 - y1 : -(y2 - y1); // conj for the mirrored case
       const double den = dx * dx + dy * dy;
       if (den < min_baseline * min_baseline) return false;
 
@@ -260,8 +260,8 @@ namespace astap {
       // can be right, so keep the closest and let the fit see independent points.
       best_inliers.clear();
       if (best_idx.empty()) return 0;
-      std::unordered_map<uint32_t, size_t> chosen;  // image quad -> position in best_inliers
-      for (size_t k : best_idx) {
+      std::unordered_map<uint32_t, size_t> chosen; // image quad -> position in best_inliers
+      for (size_t k: best_idx) {
         auto it = chosen.find(cluster[k].iq);
         if (it == chosen.end()) {
           chosen.emplace(cluster[k].iq, best_inliers.size());
@@ -291,10 +291,12 @@ namespace astap {
       for (int k = 0; k < 5; k++) r[k] = static_cast<float>(image_quads(k + 1, q));
       hits.clear();
       index.query(r, hits);
-      for (uint32_t h : hits) {
+      for (uint32_t h: hits) {
         const double sc = index.d1(h) / d1;
-        pairs.push_back({static_cast<uint32_t>(q), h, sc,
-                         static_cast<long>(std::floor(std::log(sc) / s.scale_bin))});
+        pairs.push_back({
+          static_cast<uint32_t>(q), h, sc,
+          static_cast<long>(std::floor(std::log(sc) / s.scale_bin))
+        });
       }
     }
     out.nr_matches = static_cast<int>(pairs.size());
@@ -333,7 +335,7 @@ namespace astap {
     struct KeyHash {
       size_t operator()(const Key &k) const {
         uint64_t h = 1469598103934665603ULL;
-        for (long v : {k.s, k.x, k.y, k.z}) {
+        for (long v: {k.s, k.x, k.y, k.z}) {
           h ^= static_cast<uint64_t>(v);
           h *= 1099511628211ULL;
         }
@@ -347,15 +349,17 @@ namespace astap {
       const double c = cell_size(pairs[k].sbin);
       const double dec = index.centre_dec(pairs[k].dq), ra = index.centre_ra(pairs[k].dq);
       const double cd = std::cos(dec);
-      const Key key{pairs[k].sbin, static_cast<long>(std::floor(cd * std::cos(ra) / c)),
-                    static_cast<long>(std::floor(cd * std::sin(ra) / c)),
-                    static_cast<long>(std::floor(std::sin(dec) / c))};
+      const Key key{
+        pairs[k].sbin, static_cast<long>(std::floor(cd * std::cos(ra) / c)),
+        static_cast<long>(std::floor(cd * std::sin(ra) / c)),
+        static_cast<long>(std::floor(std::sin(dec) / c))
+      };
       vote[key].push_back(k);
     }
 
-    std::vector<std::pair<size_t, const std::vector<uint32_t> *>> peaks;
+    std::vector<std::pair<size_t, const std::vector<uint32_t> *> > peaks;
     peaks.reserve(vote.size());
-    for (const auto &kv : vote) peaks.push_back({kv.second.size(), &kv.second});
+    for (const auto &kv: vote) peaks.push_back({kv.second.size(), &kv.second});
     // Sort by vote count, breaking ties on the first member so the order does not
     // depend on how the hash table happened to lay itself out.
     std::sort(peaks.begin(), peaks.end(), [](const auto &a, const auto &b) {
@@ -373,14 +377,14 @@ namespace astap {
 
     for (int t = 0; t < tries; t++) {
       const std::vector<uint32_t> &members = *peaks[t].second;
-      if (static_cast<int>(members.size()) < 2) break;  // nothing below this can help either
+      if (static_cast<int>(members.size()) < 2) break; // nothing below this can help either
       out.peaks_tried = t + 1;
 
       // Centroid of the bucket, then everything at a compatible scale within one
-      // field of it — which recovers pairs the cell boundary happened to cut off.
+      // field of it - which recovers pairs the cell boundary happened to cut off.
       cra.clear();
       cdec.clear();
-      for (uint32_t k : members) {
+      for (uint32_t k: members) {
         cra.push_back(index.centre_ra(pairs[k].dq));
         cdec.push_back(index.centre_dec(pairs[k].dq));
       }
@@ -392,7 +396,7 @@ namespace astap {
       const double gather = cell_size(sbin);
 
       cluster.clear();
-      for (const Pair &p : pairs) {
+      for (const Pair &p: pairs) {
         if (std::labs(p.sbin - sbin) > 1) continue;
         double sep;
         ang_sep(index.centre_ra(p.dq), index.centre_dec(p.dq), ref_ra, ref_dec, sep);
@@ -422,7 +426,7 @@ namespace astap {
                      [](const Candidate &a, const Candidate &b) {
                        return a.inliers.size() > b.inliers.size();
                      });
-    for (const Candidate &c : candidates) {
+    for (const Candidate &c: candidates) {
       out.nr_inliers = static_cast<int>(c.inliers.size());
       if (fit_at(index, image_quads, c.inliers, c.ref_ra, c.ref_dec, width, height, s, out))
         return out;
@@ -454,7 +458,7 @@ namespace astap {
     }
 
     int tried = 0;
-    for (size_t i : order) {
+    for (size_t i: order) {
       if (tiers[i].size() == 0) continue;
       tried++;
       IndexSolveResult r = solve_with_index(tiers[i], image_quads, width, height, s);
@@ -475,7 +479,7 @@ namespace astap {
                                           int width, int height, const IndexSolveSettings &s,
                                           double density_hint) {
     auto attempt = [&](const RowList &use, bool many, IndexSolveResult &r) {
-      RowList work = use;  // find_quads sorts its input in place
+      RowList work = use; // find_quads sorts its input in place
       RowList quads;
       if (many)
         find_many_quads(work, quads, 6);
@@ -485,8 +489,8 @@ namespace astap {
       // or the sweep is ordered for a depth the image no longer has.
       const double scaled_hint =
           density_hint > 0 && stars.count() > 0
-              ? density_hint * static_cast<double>(use.count()) / static_cast<double>(stars.count())
-              : density_hint;
+            ? density_hint * static_cast<double>(use.count()) / static_cast<double>(stars.count())
+            : density_hint;
       r = solve_with_tiers(tiers, quads, width, height, s, scaled_hint);
       r.stars_used = use.count();
       r.stars_detected = stars.count();
@@ -516,7 +520,7 @@ namespace astap {
     // Pass 3 onwards: the same two passes against the brightest half of the
     // stars, then the brightest quarter. An image deeper than the deepest tier
     // has no rung to match against, and thinning it reaches one without holding
-    // a deeper index — see density_match_levels for why that is the same knob.
+    // a deeper index - see density_match_levels for why that is the same knob.
     // Every level costs another sweep, so it sits behind the two full-list
     // passes and an image that already solved never reaches it.
     RowList thinned = stars;
@@ -531,7 +535,7 @@ namespace astap {
         highest_snr = std::max(highest_snr, thinned(2, i));
       const size_t before = thinned.count();
       get_brightest_stars(static_cast<int>(want), highest_snr, thinned);
-      if (thinned.count() >= before) break;  // the cut did not bite
+      if (thinned.count() >= before) break; // the cut did not bite
 
       if (attempt(thinned, false, r)) return r;
       if (attempt(thinned, true, r)) return r;
@@ -646,7 +650,7 @@ namespace astap {
     }
 
     // The database is read over a *square* field, so a square the height of the
-    // image would leave its left and right edges uncovered — and every quad out
+    // image would leave its left and right edges uncovered - and every quad out
     // there unmatchable. The port enlarges the square by sqrt((w/h)^2 + 1) to
     // take in the whole image, and scales the star count by the same factor
     // squared so the depth per square degree still matches the image's own.
@@ -661,7 +665,7 @@ namespace astap {
     // A little less than the image count, since the square is based on height.
     const int nrstars_image = static_cast<int>(stars.count());
     const int want = std::max(
-        8, static_cast<int>(pround(nrstars_image / aspect * oversize * oversize)));
+      8, static_cast<int>(pround(nrstars_image / aspect * oversize * oversize)));
 
     RowList db_stars;
     if (!read_stars_at(db, io.ra0, io.dec0, field, want, db_stars)) {
@@ -701,7 +705,7 @@ namespace astap {
     // ...and only when it actually fits better. A count of quads says nothing
     // about scatter: a refit backed by four hundred quads can sit further from
     // all of them than the index solution built on seventeen, and over the
-    // corpus that is not hypothetical — it is where the largest position error
+    // corpus that is not hypothetical - it is where the largest position error
     // came from.
     //
     // The comparison has to be against the same references, or it is rigged.
@@ -734,7 +738,7 @@ namespace astap {
 
     if (out.residual_before >= 0 && out.residual_after > out.residual_before) {
       out.reason = "the refit sits further from the references than the index solution, keeping "
-                   "that";
+          "that";
       return out;
     }
     out.kept = true;
@@ -748,8 +752,9 @@ namespace astap {
     if (want_sip) {
       out.sip_valid = fit_sip(m, io, out.sip);
       if (!out.sip_valid)
-        out.reason = m.b_xrefpositions.size() < 20 ? "fewer than 20 quads, SIP needs a cubic's worth"
-                                                  : "the cubic fit failed";
+        out.reason = m.b_xrefpositions.size() < 20
+                       ? "fewer than 20 quads, SIP needs a cubic's worth"
+                       : "the cubic fit failed";
     }
     return out;
   }

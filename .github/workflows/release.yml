@@ -30,7 +30,7 @@ name: Release
 
 on:
   push:
-    tags: ["v*"]
+    tags: [ "v*" ]
   workflow_dispatch:
 
 jobs:
@@ -40,7 +40,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, ubuntu-24.04-arm, macos-latest, windows-latest]
+        os: [ ubuntu-latest, ubuntu-24.04-arm, macos-latest, windows-latest ]
     steps:
       - uses: actions/checkout@v4
 
@@ -84,7 +84,7 @@ jobs:
     name: Publish to TestPyPI
     # Manual runs only: a tag goes to the real index below.
     if: github.event_name == 'workflow_dispatch'
-    needs: [wheels, sdist]
+    needs: [ wheels, sdist ]
     runs-on: ubuntu-latest
     environment: testpypi
     permissions:
@@ -101,7 +101,7 @@ jobs:
   pypi:
     name: Publish to PyPI
     if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
-    needs: [wheels, sdist]
+    needs: [ wheels, sdist ]
     runs-on: ubuntu-latest
     environment: pypi
     permissions:

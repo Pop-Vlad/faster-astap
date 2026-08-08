@@ -2,18 +2,16 @@
 
 The C++ tests already check that solving an array agrees with solving the file
 it came from. What is worth testing here is the layer above that: the argument
-handling, the conversions, the Solution, and the lifecycle — the things a caller
+handling, the conversions, the Solution, and the lifecycle - the things a caller
 touches and the C++ tests never see.
 """
 
 from __future__ import annotations
 
+import faster_astap as fa
 import math
-
 import numpy as np
 import pytest
-
-import faster_astap as fa
 
 
 # --- things that need nothing at all -----------------------------------------

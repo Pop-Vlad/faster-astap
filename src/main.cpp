@@ -63,8 +63,8 @@ namespace {
         "Preference is given to the command line values. The solver result is written to\n"
         "filename.ini and, with -wcs, to filename.wcs.\n"
         "\n"
-     << "Image files read by this build: " << astap::supported_image_extensions() << "\n"
-     << "\n"
+        << "Image files read by this build: " << astap::supported_image_extensions() << "\n"
+        << "\n"
         "Exit status: 0 no errors, 1 no solution, 2 not enough stars detected,\n"
         "16 error reading the image file, 32 no star database found,\n"
         "33 error reading the star database.\n";
@@ -114,7 +114,7 @@ int main(int argc, char **argv) {
   } else {
     settings.database_path = with_separator(dir_of(argv[0]));
     astap::StarDatabase probe;
-    for (const std::string &dir : astap::default_database_directories())
+    for (const std::string &dir: astap::default_database_directories())
       if (probe.select(with_separator(dir), has("D") ? val("D") : "auto", 1.0)) {
         settings.database_path = with_separator(dir);
         break;
@@ -173,7 +173,7 @@ int main(int argc, char **argv) {
   const bool solution = solver.solve(std::move(img), head);
 
   {
-    const astap::Solver::Timing& t = solver.timing();
+    const astap::Solver::Timing &t = solver.timing();
     char buf[320];
     std::snprintf(buf, sizeof(buf),
                   "Timing: image stages %.2f s wall, spiral search %.2f s wall "

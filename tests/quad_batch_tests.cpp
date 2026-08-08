@@ -61,13 +61,17 @@ static void compare(int nrstars_image, size_t npos, size_t nstars, unsigned seed
 }
 
 int main() {
-  struct Case { int nrstars_image; size_t nstars; const char* what; };
+  struct Case {
+    int nrstars_image;
+    size_t nstars;
+    const char *what;
+  };
   const Case cases[] = {
-      {7, 20, "mode 7"},   {7, 60, "mode 7"},  {25, 40, "mode 6"},
-      {40, 80, "mode 5"},  {124, 94, "find_quads"}, {200, 300, "find_quads sorted"},
+    {7, 20, "mode 7"}, {7, 60, "mode 7"}, {25, 40, "mode 6"},
+    {40, 80, "mode 5"}, {124, 94, "find_quads"}, {200, 300, "find_quads sorted"},
   };
 
-  for (const Case& c : cases) compare(c.nrstars_image, 24, c.nstars, 7);
+  for (const Case &c: cases) compare(c.nrstars_image, 24, c.nstars, 7);
 
   // A batch with mixed star counts must still come out right.
   std::printf("\n");

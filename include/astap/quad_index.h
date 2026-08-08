@@ -34,14 +34,14 @@ namespace astap {
     // detection the catalogue subset does not contain changes which three
     // neighbours a star has, and so replaces its quad entirely. A ten degree
     // field yields only ~76 quads, with no redundancy to absorb that. The larger
-    // group is a strict superset — C(6,4) contains the three-nearest quad — so it
+    // group is a strict superset - C(6,4) contains the three-nearest quad - so it
     // can only add matches, and the sparse tiers are small enough to afford it.
     double many_quads_below_density = 5.0;
 
     // Restrict the build to a cap around this position. radius_deg >= 180
     // covers the sky.
-    double centre_ra = 0;   // radians
-    double centre_dec = 0;  // radians
+    double centre_ra = 0; // radians
+    double centre_dec = 0; // radians
     double radius_deg = 180;
   };
 
@@ -57,7 +57,9 @@ namespace astap {
     // theoretical case.
     QuadIndex(const QuadIndex &o) { *this = o; }
     QuadIndex(QuadIndex &&o) noexcept { *this = std::move(o); }
+
     QuadIndex &operator=(const QuadIndex &o);
+
     QuadIndex &operator=(QuadIndex &&o) noexcept;
 
     // Builds the index by walking the database tiles. Returns false when the
@@ -70,8 +72,8 @@ namespace astap {
 
     // Ratios 1..5 of one quad.
     const float *ratios(size_t i) const { return v_ratio_ + i * 5; }
-    double d1(size_t i) const { return v_d1_[i]; }        // longest side, arcsec
-    double centre_ra(size_t i) const { return v_ra_[i]; }  // quad centre, radians
+    double d1(size_t i) const { return v_d1_[i]; } // longest side, arcsec
+    double centre_ra(size_t i) const { return v_ra_[i]; } // quad centre, radians
     double centre_dec(size_t i) const { return v_dec_[i]; }
 
     // True when the quads are read straight out of a mapped cache file rather
@@ -88,7 +90,9 @@ namespace astap {
   private:
     friend bool build_tiers(StarDatabase &, const QuadIndexSettings &, const std::vector<double> &,
                             std::vector<QuadIndex> &, const std::function<void(double)> &);
+
     friend bool save_index_file(const std::string &, const std::vector<QuadIndex> &);
+
     friend bool load_index_file(const std::string &, std::vector<QuadIndex> &, double, double,
                                 std::string *);
 
@@ -103,6 +107,7 @@ namespace astap {
     // Bin on the first three ratios; probing the 3x3x3 neighbourhood covers the
     // tolerance ball in those dimensions, the other two are checked exactly.
     int bin_of(float v) const;
+
     uint32_t cell_of(int b0, int b1, int b2) const;
 
     QuadIndexSettings settings_;
@@ -112,10 +117,10 @@ namespace astap {
     // that came out of it. Everything that reads a quad goes through the views,
     // so the two cases are distinguished here and nowhere else.
     std::shared_ptr<const MappedFile> map_;
-    std::vector<float> ratio_;   // 5 per quad
+    std::vector<float> ratio_; // 5 per quad
     std::vector<double> d1_;
     std::vector<double> ra_, dec_;
-    std::vector<uint32_t> cell_start_;  // CSR over the 3D bin grid
+    std::vector<uint32_t> cell_start_; // CSR over the 3D bin grid
     std::vector<uint32_t> items_;
 
     const float *v_ratio_ = nullptr;
@@ -168,12 +173,12 @@ namespace astap {
 
   struct QuadIndexFile {
     uint32_t version = 0;
-    uint32_t nbins = 0;  // bins per ratio axis; the grid holds nbins^3 cells
+    uint32_t nbins = 0; // bins per ratio axis; the grid holds nbins^3 cells
     int database_type = 0;
     double quad_tolerance = 0;
     double centre_ra = 0, centre_dec = 0, radius_deg = 180;
-    std::vector<double> densities;  // one per tier, in file order
-    std::vector<uint64_t> quads;    // quads per tier
+    std::vector<double> densities; // one per tier, in file order
+    std::vector<uint64_t> quads; // quads per tier
     uint64_t bytes = 0;
   };
 
@@ -203,7 +208,7 @@ namespace astap {
   // name. Tiers are cached one per file so that ladders compose: a run that
   // wants a deeper ceiling builds and stores only the rungs it adds, and the
   // ones it shares with the default ladder are read back rather than rebuilt.
-  // A single file for the whole ladder cannot do that — it belongs to exactly
+  // A single file for the whole ladder cannot do that - it belongs to exactly
   // one ladder, so asking for one more rung discards all the others.
   std::string index_tier_cache_path(const std::string &db_name, int database_type,
                                     double quad_tolerance, double density);

@@ -54,8 +54,8 @@ add_library(astap_solver
         src/star_database.cpp
         src/star_detection.cpp
         src/solver.cpp
-        # The per image pipeline of both solvers. It needs no image decoder —
-        # the caller supplies pixels — so it belongs to this module, and the
+        # The per image pipeline of both solvers. It needs no image decoder -
+        # the caller supplies pixels - so it belongs to this module, and the
         # file front ends that read and write around it live in astap_image.
         src/solve_service.cpp
         src/spiral_service.cpp
@@ -323,14 +323,14 @@ endif ()
 # It links astap_solver, which depends on nothing but the standard library, so a
 # wheel carries no third party libraries at all. ASTAP_PYTHON_IMAGE_IO adds
 # astap_image on top, which brings whatever image decoders this machine has; the
-# formats that need no library — FITS, .fz, Netpbm, BMP — come either way.
+# formats that need no library - FITS, .fz, Netpbm, BMP - come either way.
 option(ASTAP_PYTHON "Build the faster_astap Python extension module" OFF)
 option(ASTAP_PYTHON_IMAGE_IO "Let the Python module read image files, not just arrays" ON)
 
 if (ASTAP_PYTHON)
     find_package(Python 3.9 REQUIRED COMPONENTS Interpreter Development.Module)
-    # Prefer an installed pybind11 — the one pyproject.toml asks for, or the
-    # system package — and fetch it only when there is none, so a build never
+    # Prefer an installed pybind11 - the one pyproject.toml asks for, or the
+    # system package - and fetch it only when there is none, so a build never
     # silently depends on the network when it did not have to.
     find_package(pybind11 CONFIG QUIET)
     if (NOT pybind11_FOUND)
@@ -347,8 +347,8 @@ if (ASTAP_PYTHON)
     # platforms everything that goes into one has to be position independent.
     # Without this the link fails on a thread local in find_many_quads, whose
     # relocation cannot be resolved in a shared object. macOS and Windows do not
-    # need telling — macOS compiles position independent by default and Windows
-    # has no equivalent — so Linux is where this shows up.
+    # need telling - macOS compiles position independent by default and Windows
+    # has no equivalent - so Linux is where this shows up.
     #
     # Set here rather than globally so that a build of the two command line
     # solvers alone is unchanged: position independence costs a little indirection

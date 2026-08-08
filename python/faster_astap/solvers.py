@@ -1,7 +1,7 @@
 """The two solvers, with the setup separated from the solving.
 
 Both classes are built the same way: construct with everything that describes
-the *installation* — where the star database is, how deep an index to build —
+the *installation* - where the star database is, how deep an index to build -
 then `load()` once, then `solve()` per image. `load()` is the expensive call and
 the reason these are objects rather than functions.
 """
@@ -116,15 +116,15 @@ class IndexSolver(_Solver):
     _impl_factory = staticmethod(_core.IndexSolver)
 
     def __init__(
-        self,
-        *,
-        database_path: Optional[PathLike] = None,
-        database: str = "auto",
-        quad_tolerance: float = 0.007,
-        ladder: Optional[Sequence[float]] = None,
-        index_cache: Optional[PathLike] = None,
-        use_cache: bool = True,
-        rebuild: bool = False,
+            self,
+            *,
+            database_path: Optional[PathLike] = None,
+            database: str = "auto",
+            quad_tolerance: float = 0.007,
+            ladder: Optional[Sequence[float]] = None,
+            index_cache: Optional[PathLike] = None,
+            use_cache: bool = True,
+            rebuild: bool = False,
     ):
         super().__init__(database_path=database_path, database=database)
         self._quad_tolerance = quad_tolerance
@@ -153,17 +153,17 @@ class IndexSolver(_Solver):
         return self
 
     def solve(
-        self,
-        image,
-        *,
-        fov: float = 0.0,
-        max_stars: int = 500,
-        min_star_size: float = 1.5,
-        downsample: int = 0,
-        want_sip: bool = False,
-        refine: bool = True,
-        label: str = "",
-        progress: Optional[Callable[[str], None]] = None,
+            self,
+            image,
+            *,
+            fov: float = 0.0,
+            max_stars: int = 500,
+            min_star_size: float = 1.5,
+            downsample: int = 0,
+            want_sip: bool = False,
+            refine: bool = True,
+            label: str = "",
+            progress: Optional[Callable[[str], None]] = None,
     ) -> Solution:
         """Solves one image.
 
@@ -217,7 +217,7 @@ class IndexSolver(_Solver):
             return "<IndexSolver not loaded>"
         return (
             f"<IndexSolver {self.database} {self.tier_count} tiers "
-            f"{self.quad_count / 1e6:.1f}M quads {self.bytes / 2**30:.1f} GiB>"
+            f"{self.quad_count / 1e6:.1f}M quads {self.bytes / 2 ** 30:.1f} GiB>"
         )
 
 
@@ -232,12 +232,12 @@ class SpiralSolver(_Solver):
     _impl_factory = staticmethod(_core.SpiralSolver)
 
     def __init__(
-        self,
-        *,
-        database_path: Optional[PathLike] = None,
-        database: str = "auto",
-        warm: bool = False,
-        threads: int = 0,
+            self,
+            *,
+            database_path: Optional[PathLike] = None,
+            database: str = "auto",
+            warm: bool = False,
+            threads: int = 0,
     ):
         super().__init__(database_path=database_path, database=database)
         self._warm = warm
@@ -260,22 +260,22 @@ class SpiralSolver(_Solver):
         return self
 
     def solve(
-        self,
-        image,
-        *,
-        ra: Optional[float] = None,
-        dec: Optional[float] = None,
-        fov: float = 0.0,
-        radius: float = 180.0,
-        max_stars: int = 500,
-        quad_tolerance: float = 0.007,
-        min_star_size: float = 1.5,
-        downsample: int = 0,
-        slow: bool = False,
-        check_pattern_filter: bool = False,
-        want_sip: bool = False,
-        label: str = "",
-        progress: Optional[Callable[[str], None]] = None,
+            self,
+            image,
+            *,
+            ra: Optional[float] = None,
+            dec: Optional[float] = None,
+            fov: float = 0.0,
+            radius: float = 180.0,
+            max_stars: int = 500,
+            quad_tolerance: float = 0.007,
+            min_star_size: float = 1.5,
+            downsample: int = 0,
+            slow: bool = False,
+            check_pattern_filter: bool = False,
+            want_sip: bool = False,
+            label: str = "",
+            progress: Optional[Callable[[str], None]] = None,
     ) -> Solution:
         """Solves one image, searching outward from (`ra`, `dec`) in radians.
 

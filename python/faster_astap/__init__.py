@@ -15,7 +15,7 @@ ASTAP's own search: slower and it wants a starting position, but it reproduces
 `astap_cli`'s answer digit for digit. They take the same shape of call and
 return the same `Solution`, so swapping one for the other is a one line change.
 
-Pixel values are expected on the scale the detector produced — the same
+Pixel values are expected on the scale the detector produced - the same
 0..65535 range a FITS frame carries. An array normalised to 0..1 is rejected
 rather than quietly failing to find any stars in it.
 

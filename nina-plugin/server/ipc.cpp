@@ -44,9 +44,9 @@ namespace astap {
       std::string last_error_text(DWORD e) {
         char *buf = nullptr;
         const DWORD n = FormatMessageA(
-            FORMAT_MESSAGE_ALLOCATE_BUFFER | FORMAT_MESSAGE_FROM_SYSTEM |
-                FORMAT_MESSAGE_IGNORE_INSERTS,
-            nullptr, e, 0, reinterpret_cast<char *>(&buf), 0, nullptr);
+          FORMAT_MESSAGE_ALLOCATE_BUFFER | FORMAT_MESSAGE_FROM_SYSTEM |
+          FORMAT_MESSAGE_IGNORE_INSERTS,
+          nullptr, e, 0, reinterpret_cast<char *>(&buf), 0, nullptr);
         std::string s = n && buf ? std::string(buf, n) : "error " + std::to_string(e);
         if (buf) LocalFree(buf);
         while (!s.empty() && (s.back() == '\n' || s.back() == '\r' || s.back() == '.')) s.pop_back();
@@ -68,8 +68,9 @@ namespace astap {
         DWORD done = 0;
         BOOL ok = writing ? WriteFile(h, buf, len, &done, &ov) : ReadFile(h, buf, len, &done, &ov);
         if (!ok && GetLastError() == ERROR_IO_PENDING) {
-          const DWORD w = WaitForSingleObject(ev, timeout_ms < 0 ? INFINITE
-                                                                 : static_cast<DWORD>(timeout_ms));
+          const DWORD w = WaitForSingleObject(ev, timeout_ms < 0
+                                                    ? INFINITE
+                                                    : static_cast<DWORD>(timeout_ms));
           if (w != WAIT_OBJECT_0) {
             CancelIo(h);
             WaitForSingleObject(ev, INFINITE); // the cancel still completes it
@@ -169,7 +170,8 @@ namespace astap {
       }
     };
 
-    Server::Server() : impl_(new Impl) {}
+    Server::Server() : impl_(new Impl) {
+    }
 
     Server::~Server() { stop(); }
 
@@ -189,12 +191,12 @@ namespace astap {
                                     nullptr);
         if (h == INVALID_HANDLE_VALUE) {
           const DWORD e = GetLastError();
-          for (HANDLE p : impl_->pipes) CloseHandle(p);
+          for (HANDLE p: impl_->pipes) CloseHandle(p);
           impl_->pipes.clear();
           if (error)
             *error = e == ERROR_ACCESS_DENIED
-                         ? "another server already holds " + endpoint
-                         : "CreateNamedPipe: " + last_error_text(e);
+                       ? "another server already holds " + endpoint
+                       : "CreateNamedPipe: " + last_error_text(e);
           return false;
         }
         impl_->pipes.push_back(h);
@@ -203,7 +205,7 @@ namespace astap {
     }
 
     void Server::run() {
-      for (HANDLE h : impl_->pipes) {
+      for (HANDLE h: impl_->pipes) {
         impl_->workers.emplace_back([this, h] {
           while (!impl_->stopping) {
             OVERLAPPED ov = {};
@@ -238,10 +240,10 @@ namespace astap {
                                OPEN_EXISTING, 0, nullptr);
         if (h != INVALID_HANDLE_VALUE) CloseHandle(h);
       }
-      for (std::thread &t : impl_->workers)
+      for (std::thread &t: impl_->workers)
         if (t.joinable()) t.join();
       impl_->workers.clear();
-      for (HANDLE h : impl_->pipes) CloseHandle(h);
+      for (HANDLE h: impl_->pipes) CloseHandle(h);
       impl_->pipes.clear();
     }
 
@@ -382,7 +384,8 @@ namespace astap {
       std::condition_variable done;
     };
 
-    Server::Server() : impl_(new Impl) {}
+    Server::Server() : impl_(new Impl) {
+    }
 
     Server::~Server() { stop(); }
 
@@ -450,7 +453,7 @@ namespace astap {
         ::close(impl_->listen_fd);
         impl_->listen_fd = -1;
       }
-      for (std::thread &t : impl_->workers)
+      for (std::thread &t: impl_->workers)
         if (t.joinable()) t.join();
       impl_->workers.clear();
       ::unlink(endpoint_.c_str());

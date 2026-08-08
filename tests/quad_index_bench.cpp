@@ -25,10 +25,10 @@ static double secs(Clock::time_point a, Clock::time_point b) {
   return std::chrono::duration<double>(b - a).count();
 }
 
-int main(int argc, char** argv) {
+int main(int argc, char **argv) {
   if (argc < 3) {
     std::printf("usage: quad_index_bench <image.fits> <database dir> "
-                "[density] [true_ra_deg true_dec_deg]\n");
+      "[density] [true_ra_deg true_dec_deg]\n");
     return 2;
   }
   const std::string image = argv[1];
@@ -94,14 +94,17 @@ int main(int argc, char** argv) {
   // --- query ---------------------------------------------------------------
   t0 = Clock::now();
   std::vector<uint32_t> hits;
-  struct Pair { uint32_t iq, dq; double scale; };
+  struct Pair {
+    uint32_t iq, dq;
+    double scale;
+  };
   std::vector<Pair> pairs;
   for (size_t q = 0; q < iquads.count(); q++) {
     float r[5];
     for (int k = 0; k < 5; k++) r[k] = static_cast<float>(iquads(k + 1, q));
     hits.clear();
     index.query(r, hits);
-    for (uint32_t h : hits)
+    for (uint32_t h: hits)
       pairs.push_back({static_cast<uint32_t>(q), h, index.d1(h) / iquads(0, q)});
   }
   t1 = Clock::now();

@@ -79,8 +79,8 @@ namespace astap {
         // joined from there because the exiting thread needs that same lock to
         // run its own detach notification. The join never returns and the
         // process cannot even be killed. Outliving the process sidesteps the
-        // question — the workers sit on a condition variable and the system
-        // reclaims them — and shutdown_thread_pool() is the tidy path for a
+        // question - the workers sit on a condition variable and the system
+        // reclaims them - and shutdown_thread_pool() is the tidy path for a
         // caller that can run it while the library is still loaded.
         static Pool *p = new Pool();
         return *p;
@@ -94,7 +94,7 @@ namespace astap {
           stop_ = true;
         }
         cv_work_.notify_all();
-        for (std::thread &t : pool_)
+        for (std::thread &t: pool_)
           if (t.joinable()) t.join();
         pool_.clear();
         workers_ = 0;
@@ -119,7 +119,7 @@ namespace astap {
           next_ = 1; // chunk 0 runs on the calling thread
           done_ = 0;
           busy_ = true;
-            }
+        }
         cv_work_.notify_all();
 
         body(0); // the caller takes the first chunk
@@ -154,36 +154,36 @@ namespace astap {
       }
 
       void worker_loop() {
-      for (;;) {
-        unsigned mine;
-        const std::function<void(unsigned)> *body;
-        {
-          std::unique_lock<std::mutex> lk(m_);
-          cv_work_.wait(lk, [this] { return stop_ || (busy_ && next_ < chunks_); });
-          if (stop_) return;
-          // The task pointer is read under the same lock that hands out the
-          // chunk. Caching it across iterations would be a use after return:
-          // it points at the caller's stack, and the caller may already have
-          // returned and started the next batch.
-          mine = next_++;
-          body = body_;
+        for (;;) {
+          unsigned mine;
+          const std::function<void(unsigned)> *body;
+          {
+            std::unique_lock<std::mutex> lk(m_);
+            cv_work_.wait(lk, [this] { return stop_ || (busy_ && next_ < chunks_); });
+            if (stop_) return;
+            // The task pointer is read under the same lock that hands out the
+            // chunk. Caching it across iterations would be a use after return:
+            // it points at the caller's stack, and the caller may already have
+            // returned and started the next batch.
+            mine = next_++;
+            body = body_;
+          }
+          (*body)(mine);
+          {
+            std::lock_guard<std::mutex> lk(m_);
+            done_++;
+          }
+          cv_done_.notify_one();
         }
-        (*body)(mine);
-        {
-          std::lock_guard<std::mutex> lk(m_);
-          done_++;
-        }
-        cv_done_.notify_one();
       }
-    }
 
-    std::vector<std::thread> pool_;
+      std::vector<std::thread> pool_;
       unsigned workers_ = 0;
       std::mutex m_;
       std::condition_variable cv_work_, cv_done_;
       const std::function<void(unsigned)> *body_ = nullptr;
       unsigned chunks_ = 0, next_ = 0, done_ = 0;
-        bool busy_ = false, stop_ = false;
+      bool busy_ = false, stop_ = false;
     };
   } // namespace
 

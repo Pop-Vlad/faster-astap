@@ -4,7 +4,7 @@
 // It lives apart from the pipeline it wraps because it is the only part that
 // needs an image decoder. Everything solve_image() does is in astap_solver,
 // which depends on nothing outside the standard library, so a caller that
-// already holds pixels — a Python binding, a camera driver, a test — can solve
+// already holds pixels - a Python binding, a camera driver, a test - can solve
 // without libpng, libjpeg, libtiff and LibRaw coming along for the ride.
 
 #include <chrono>
@@ -23,7 +23,8 @@ namespace astap {
 
     // Said before the pipeline runs, so they have to be put in front of the
     // messages it produces rather than appended to them.
-    std::vector<std::string> pre;
+    std::vector<std::string>
+    pre;
     auto say = [&](const std::string &m) {
       pre.push_back(m);
       if (progress) progress(m);

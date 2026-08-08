@@ -18,7 +18,7 @@ readme = "README.md"
 requires-python = ">=3.9"
 # SPDX expression rather than the old free text plus classifier pair. The
 # licence file travels with the wheel and the sdist because MPL-2.0 requires the
-# notice to stay with the code — this is a port of Han Kleijn's ASTAP algorithm,
+# notice to stay with the code - this is a port of Han Kleijn's ASTAP algorithm,
 # published under the same licence, not a work that could be relicensed.
 license = "MPL-2.0"
 license-files = ["LICENSE"]
@@ -53,7 +53,7 @@ build-dir = "build/{wheel_tag}"
 build.targets = ["_core"]
 # The corpus is hundreds of megabytes of survey cutouts that anyone can refetch
 # with tools/fetch_skyview_corpus.py, and the rest is build output. Everything
-# CMake needs to configure — CMakeLists.txt, include/, src/, tests/, python/ —
+# CMake needs to configure - CMakeLists.txt, include/, src/, tests/, python/ -
 # stays in, because an sdist that cannot build is not a source distribution.
 sdist.exclude = [
     "corpus",
@@ -83,7 +83,7 @@ ASTAP_STATIC_RUNTIME = "OFF"
 # which is not the same thing on each: the macOS runners have Homebrew's libpng,
 # libjpeg and libtiff, the manylinux images have zlib, and the Windows ones have
 # none. That would ship wheels whose supported_image_extensions() differs by
-# platform — a file that opens on a Mac and not on Windows — and it would vendor
+# platform - a file that opens on a Mac and not on Windows - and it would vendor
 # those libraries into the wheel, which is what delocate refused: Homebrew builds
 # for the runner's own macOS, far newer than a wheel may target.
 #
@@ -113,7 +113,7 @@ test-command = "python -c \"import faster_astap as fa; print(fa.__version__, fa.
 
 [tool.cibuildwheel.macos]
 # Both architectures from the one arm64 runner. macos-13 was the last free Intel
-# runner and has been retired — Intel is now only on the paid -large labels — so
+# runner and has been retired - Intel is now only on the paid -large labels - so
 # the x86_64 wheel is cross compiled here instead. cibuildwheel skips the test
 # step for a wheel the runner cannot execute, so the Intel build is compiled and
 # not run; that is the trade for still shipping one at all.

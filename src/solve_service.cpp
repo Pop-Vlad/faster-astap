@@ -76,7 +76,7 @@ namespace astap {
     void scale_sip_to_original(SipCoefficients &sip, int bin) {
       if (!sip.valid || bin == 1) return;
       double (*tables[4])[4] = {sip.a, sip.b, sip.ap, sip.bp};
-      for (double (*t)[4] : tables)
+      for (double (*t)[4]: tables)
         for (int p = 0; p < 4; p++)
           for (int q = 0; q < 4; q++)
             if (t[p][q] != 0) t[p][q] *= std::pow(static_cast<double>(bin), 1 - p - q);
@@ -96,7 +96,7 @@ namespace astap {
   std::vector<double> resolve_ladder(const std::string &tiers, double max_tier) {
     if (!tiers.empty()) return parse_density_list(tiers);
     std::vector<double> ladder = default_tier_ladder();
-    for (double d : deep_tier_ladder())
+    for (double d: deep_tier_ladder())
       if (d <= max_tier) ladder.push_back(d);
     return ladder;
   }
@@ -149,7 +149,7 @@ namespace astap {
       say("Index cache " + path + " unusable (" + err + "), rebuilding it.");
       return;
     }
-    for (QuadIndex &ix : in)
+    for (QuadIndex &ix: in)
       for (size_t i = 0; i < settings_.ladder.size(); i++)
         if (!have_[i] && std::fabs(ix.settings().star_density - settings_.ladder[i]) < 1e-9) {
           tiers_[i] = std::move(ix);
@@ -165,7 +165,7 @@ namespace astap {
     if (!settings_.database_path.empty())
       return db_.select(with_separator(settings_.database_path), settings_.database, 1.0);
 
-    for (const std::string &dir : default_database_directories()) {
+    for (const std::string &dir: default_database_directories()) {
       if (!db_.select(with_separator(dir), settings_.database, 1.0)) continue;
       if (log) log("Star database: " + db_.name() + " in " + db_.path());
       settings_.database_path = dir;
@@ -192,8 +192,8 @@ namespace astap {
     // there, and still written when a caller names a cache outright.
     const std::string ladder_file =
         settings_.index_cache.empty()
-            ? default_index_cache_path(db_name, db_type, settings_.quad_tolerance)
-            : settings_.index_cache;
+          ? default_index_cache_path(db_name, db_type, settings_.quad_tolerance)
+          : settings_.index_cache;
     cache_path_ = settings_.index_cache.empty() ? directory_of(ladder_file) : ladder_file;
 
     // A rung at a time. Each is cached in its own file, so the rungs this run
@@ -207,7 +207,7 @@ namespace astap {
       if (!settings_.index_cache.empty()) {
         take_tiers_from(ladder_file, false, log);
       } else {
-        for (double d : settings_.ladder)
+        for (double d: settings_.ladder)
           take_tiers_from(index_tier_cache_path(db_name, db_type, settings_.quad_tolerance, d),
                           true, log);
         // Whatever is still missing may be in a ladder file written before the
@@ -233,7 +233,7 @@ namespace astap {
         // rather than making the user guess which directory was meant.
         if (s.database_path.empty()) {
           std::string where;
-          for (const std::string &dir : default_database_directories())
+          for (const std::string &dir: default_database_directories())
             where += (where.empty() ? "" : ", ") + dir;
           say("No star database found. Looked in: " + where);
         } else {
@@ -254,7 +254,7 @@ namespace astap {
         tiers_.clear();
         return false;
       }
-      for (QuadIndex &ix : made) {
+      for (QuadIndex &ix: made) {
         const double d = ix.settings().star_density;
         if (settings_.use_cache && settings_.index_cache.empty()) {
           const std::string path =
@@ -299,20 +299,20 @@ namespace astap {
 
   size_t SolveService::quad_count() const {
     size_t n = 0;
-    for (const QuadIndex &ix : tiers_) n += ix.size();
+    for (const QuadIndex &ix: tiers_) n += ix.size();
     return n;
   }
 
   size_t SolveService::bytes() const {
     size_t n = 0;
-    for (const QuadIndex &ix : tiers_) n += ix.bytes();
+    for (const QuadIndex &ix: tiers_) n += ix.bytes();
     return n;
   }
 
   std::vector<double> SolveService::densities() const {
     std::vector<double> d;
     d.reserve(tiers_.size());
-    for (const QuadIndex &ix : tiers_) d.push_back(ix.settings().star_density);
+    for (const QuadIndex &ix: tiers_) d.push_back(ix.settings().star_density);
     return d;
   }
 
@@ -414,9 +414,9 @@ namespace astap {
             std::to_string(ref.nr_candidates) + " database quads in " +
             float_to_str(refine_secs * 1000, 1) + " ms" +
             (ref.residual_before >= 0
-                 ? ", residual " + float_to_str(ref.residual_before, 3) + "\" -> " +
-                       float_to_str(ref.residual_after, 3) + "\""
-                 : "") +
+               ? ", residual " + float_to_str(ref.residual_before, 3) + "\" -> " +
+                 float_to_str(ref.residual_after, 3) + "\""
+               : "") +
             (ref.kept ? "." : ", discarded: " + ref.reason));
       if (!ref.ok && progress) say("Second pass skipped: " + ref.reason);
       if (ref.sip_valid) {
@@ -445,9 +445,9 @@ namespace astap {
         std::to_string(res.tiers_tried) + " tiers tried" +
         (res.many_quads_pass ? ", larger quad groups" : "") +
         (res.stars_used < res.stars_detected
-             ? ", brightest " + std::to_string(res.stars_used) + " of " +
-                   std::to_string(res.stars_detected) + " stars"
-             : "") +
+           ? ", brightest " + std::to_string(res.stars_used) + " of " +
+             std::to_string(res.stars_detected) + " stars"
+           : "") +
         (res.refined ? ", refined" : "") + (o.sip.valid ? ", SIP" : "") + ").");
 
     return finish(true, kErrNone);

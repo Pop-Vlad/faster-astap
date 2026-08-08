@@ -121,8 +121,8 @@ namespace astap {
 
     // The area file this reader is working through, mapped rather than read.
     //
-    // The mapping is shared with every other reader of the same area — the
-    // search threads have a StarDatabase each — and comes from a process wide
+    // The mapping is shared with every other reader of the same area - the
+    // search threads have a StarDatabase each - and comes from a process wide
     // cache that keeps it alive between visits. That is what removes the file
     // open, which is over half the cost of reaching a star: the records are then
     // addressed where they lie, with no copy and no per reader buffer.
@@ -130,7 +130,7 @@ namespace astap {
     // Held by shared_ptr so that a mapping evicted from that cache stays valid
     // for a reader still part way through it.
     std::shared_ptr<const MappedFile> area_map_;
-    const uint8_t *records_ = nullptr;  // first record, past the 110 byte header
+    const uint8_t *records_ = nullptr; // first record, past the 110 byte header
     size_t records_size_ = 0;
     size_t position_ = 0;
 

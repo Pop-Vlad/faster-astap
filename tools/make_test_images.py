@@ -18,9 +18,8 @@
 # without Pillow the PNG, TIFF and JPEG ones are. A check whose file is missing
 # reports that rather than passing quietly.
 
-import sys
-
 import numpy as np
+import sys
 
 W, H = 8, 6
 

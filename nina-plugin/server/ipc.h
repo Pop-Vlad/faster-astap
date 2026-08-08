@@ -50,11 +50,14 @@ namespace astap {
     // itself with a mutex.
     class Server {
     public:
-      using Handler = std::function<std::string(const std::string &request)>;
+      using Handler = std::function<std::string(const std::string & request)>;
 
       Server();
+
       ~Server();
+
       Server(const Server &) = delete;
+
       Server &operator=(const Server &) = delete;
 
       // Takes the endpoint. Fails when another server already holds it, which is

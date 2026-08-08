@@ -15,7 +15,7 @@ name: CI
 
 on:
   push:
-    branches: [main]
+    branches: [ main ]
   pull_request:
   workflow_dispatch:
 
@@ -30,14 +30,14 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-latest, windows-latest]
+        os: [ ubuntu-latest, macos-latest, windows-latest ]
     steps:
       - uses: actions/checkout@v4
 
       # tests/data is in the repository: 101 KB of reference frames, checked in
       # rather than generated, so this job needs no Python and no astropy. That
       # also freezes what the Rice and GZIP decoders are compared against, which
-      # is the point of those files — they were written by CFITSIO through
+      # is the point of those files - they were written by CFITSIO through
       # astropy, and a reference that regenerates is not much of a reference.
 
       # std::filesystem, which this port uses throughout, needs 10.15. The
@@ -67,8 +67,8 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-latest, windows-latest]
-        python: ["3.9", "3.13"]  # the ends of the supported range
+        os: [ ubuntu-latest, macos-latest, windows-latest ]
+        python: [ "3.9", "3.13" ]  # the ends of the supported range
     steps:
       - uses: actions/checkout@v4
 

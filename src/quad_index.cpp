@@ -58,8 +58,8 @@ namespace astap {
     // degree tile the differential tangent-plane distortion is about 6e-4
     // relative, against a quad tolerance of 7e-3.
     struct TileStars {
-      double ra = 0, dec = 0;  // tile centre
-      RowList projected;       // x, y, magnitude placeholder
+      double ra = 0, dec = 0; // tile centre
+      RowList projected; // x, y, magnitude placeholder
     };
 
     // Reads at most `want` stars of one tile. Returns false when the tile could
@@ -119,7 +119,7 @@ namespace astap {
 
       RowList quads;
       if (many)
-        find_many_quads(stars, quads, 6);  // 15 per star, see many_quads_below_density
+        find_many_quads(stars, quads, 6); // 15 per star, see many_quads_below_density
       else
         find_quads(1000 /* forces the regular three-nearest path */, stars, quads);
 
@@ -274,17 +274,17 @@ namespace astap {
     const int ntiers = static_cast<int>(densities.size());
     const double radius_rad = base.radius_deg * kPi / 180;
     double deepest = 0;
-    for (double d : densities) deepest = std::max(deepest, d);
+    for (double d: densities) deepest = std::max(deepest, d);
     const int want_deepest = stars_wanted(ntiles, deepest);
 
     // Tiles are independent, so they are built in parallel and merged in tile
     // order afterwards, which keeps the index deterministic. Every tier gets its
     // own per-tile buffer.
-    std::vector<std::vector<std::vector<float>>> t_ratio(
-        ntiers, std::vector<std::vector<float>>(ntiles));
-    std::vector<std::vector<std::vector<double>>> t_d1(
-        ntiers, std::vector<std::vector<double>>(ntiles));
-    std::vector<std::vector<std::vector<double>>> t_ra(t_d1), t_dec(t_d1);
+    std::vector<std::vector<std::vector<float> > > t_ratio(
+      ntiers, std::vector<std::vector<float> >(ntiles));
+    std::vector<std::vector<std::vector<double> > > t_d1(
+      ntiers, std::vector<std::vector<double> >(ntiles));
+    std::vector<std::vector<std::vector<double> > > t_ra(t_d1), t_dec(t_d1);
 
     std::atomic<int> done{0};
     std::atomic<int> io_errors{0};
@@ -353,7 +353,7 @@ namespace astap {
     // a query never reaches are never read.
     //
     // Storing the grid is what makes the mapping worth having. Version 3 rebuilt
-    // it on load, which meant scanning every quad's ratios — the one access
+    // it on load, which meant scanning every quad's ratios - the one access
     // pattern that faults in the entire file, and measurably slower through a
     // mapping than the bulk read it replaced. It costs about 15% more on disk.
     //
@@ -370,19 +370,19 @@ namespace astap {
 
     uint64_t align_up(uint64_t x) { return (x + kAlign - 1) / kAlign * kAlign; }
 
-    template <typename T>
+    template<typename T>
     void put(std::ostream &f, const T &v) {
       f.write(reinterpret_cast<const char *>(&v), sizeof(T));
     }
 
-    template <typename T>
+    template<typename T>
     void get(std::istream &f, T &v) {
       f.read(reinterpret_cast<char *>(&v), sizeof(T));
     }
 
     // Written from the index's views rather than its vectors, so that a tier
     // read from one cache file can be written back out to another.
-    template <typename T>
+    template<typename T>
     void put_view(std::ostream &f, const T *p, size_t n) {
       if (n) f.write(reinterpret_cast<const char *>(p), static_cast<std::streamsize>(n * sizeof(T)));
     }
@@ -474,7 +474,7 @@ namespace astap {
     put(f, s0.centre_ra);
     put(f, s0.centre_dec);
     put(f, s0.radius_deg);
-    for (const TierEntry &e : entries) put(f, e);
+    for (const TierEntry &e: entries) put(f, e);
 
     uint64_t pos = header_bytes(tiers.size());
     for (size_t k = 0; k < tiers.size(); k++) {
@@ -551,7 +551,7 @@ namespace astap {
         info.densities.push_back(entries[k].density);
         info.quads.push_back(entries[k].nquads);
         info.bytes += entries[k].nquads * (5 * sizeof(float) + 3 * sizeof(double) + sizeof(uint32_t)) +
-                      (cells_for(nbins) + 1) * sizeof(uint32_t);
+            (cells_for(nbins) + 1) * sizeof(uint32_t);
       }
       if (!f) return fail(error, path + " is truncated");
       return true;
@@ -585,7 +585,7 @@ namespace astap {
     const uint8_t *base = map->data();
     const uint64_t ncells = cells_for(info.nbins);
 
-    for (const TierEntry &e : entries) {
+    for (const TierEntry &e: entries) {
       if (min_density > 0 && e.density < min_density) continue;
       if (max_density > 0 && e.density > max_density) continue;
 
