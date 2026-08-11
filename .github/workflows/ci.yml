@@ -1,15 +1,8 @@
 # Builds and tests on the three platforms the wheels target.
 #
-# This is the job that matters most for this project: the memory mapping in
-# src/mapped_file.cpp has a POSIX half and a Windows half, and a developer only
-# ever compiles one of them. The same goes for the star database reader built on
-# it. Everything else here is ordinary, but that part is only ever proven by CI.
-#
-# Solving is barely exercised: it needs a star database, which is gigabytes and
-# is not ours to redistribute. The C++ tests and the Python tests both report
-# themselves skipped without one, so a green run here means "builds, imports and
-# behaves sensibly with no database", not "solves correctly". Real solve
-# verification is the corpus harness, run locally.
+# Solving is barely exercised: it needs a star database, which is not included in this repository
+# and would be too large to install at each CI run. The C++ tests and the Python tests both report
+# themselves skipped without one. Real solve verification is the corpus harness, run locally.
 
 name: CI
 
@@ -34,21 +27,17 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      # tests/data is in the repository: 101 KB of reference frames, checked in
-      # rather than generated, so this job needs no Python and no astropy. That
-      # also freezes what the Rice and GZIP decoders are compared against, which
-      # is the point of those files - they were written by CFITSIO through
-      # astropy, and a reference that regenerates is not much of a reference.
+      # tests/data is in the repository: some reference frames.
+      # That also freezes what the Rice and GZIP decoders are compared against, which
+      # is the point of those files - they were written by CFITSIO through astropy.
 
-      # std::filesystem, which this port uses throughout, needs 10.15. The
-      # default target is older and would not link.
+      # std::filesystem, which this port uses throughout, needs 10.15.
       - name: Set the macOS deployment target
         if: runner.os == 'macOS'
         run: echo "MACOSX_DEPLOYMENT_TARGET=10.15" >> "$GITHUB_ENV"
 
       # Without the image libraries, so the build is the same everywhere and
-      # exercises the formats that need no dependency at all. The optional
-      # decoders are a packaging concern, not a correctness one.
+      # exercises the formats that need no dependency at all.
       - name: Configure
         run: >
           cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
@@ -80,18 +69,16 @@ jobs:
         if: runner.os == 'macOS'
         run: echo "MACOSX_DEPLOYMENT_TARGET=10.15" >> "$GITHUB_ENV"
 
-      # Installed rather than built in place, so that what is tested is what a
-      # user would get.
+      # Installed rather than built in place, so that what is tested is what a user would get.
       - name: Install
         run: python -m pip install --verbose .[test]
 
       - name: Test
         run: python -m pytest python/tests -v
 
-      # The tests above skip nearly everything without a star database, so this
-      # checks the one thing they cannot: that the module loads, reports itself,
-      # and shuts its worker threads down cleanly. A process that hangs here is
-      # the loader-lock deadlock coming back.
+      # The tests above skip nearly everything without a star database.
+      # This checks the one thing they cannot: that the module loads, reports itself,
+      # and shuts its worker threads down cleanly.
       - name: Import and exit cleanly
         run: python -c "import faster_astap as fa; print(fa.__version__, fa.supported_image_extensions()); print(fa.find_databases())"
 

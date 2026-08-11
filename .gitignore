@@ -12,5 +12,4 @@ __pycache__/
 .idea/
 
 # Survey cutouts, refetch with tools/fetch_skyview_corpus.py
-corpus/*.fits
-corpus/manifest.csv
+corpus/
