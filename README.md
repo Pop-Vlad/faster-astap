@@ -326,14 +326,6 @@ sol = port.solve(frame,
 Reach for the port when you need the answer `astap_cli` would have given, digit for digit. For everything else
 `IndexSolver` is faster and needs less from you.
 
-### Image formats in the wheel
-
-The published package reads the formats:
-
-```
-.fit .fits .fts .new   .fz (Rice)   .ppm .pgm .pfm   .bmp
-```
-
 ## Build
 
 The plain build is in [Quick start](#quick-start) and needs nothing beyond a C++17 compiler.

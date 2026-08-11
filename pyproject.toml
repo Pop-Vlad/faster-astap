@@ -31,7 +31,8 @@ classifiers = [
     "Programming Language :: Python :: 3",
     "Topic :: Scientific/Engineering :: Astronomy",
 ]
-dependencies = ["numpy>=1.21"]
+# Pillow and rawpy are the decoders for the formats the PNG, JPEG, TIFF and the raw camera files.
+dependencies = ["numpy>=1.21", "pillow>=9", "rawpy>=0.17"]
 
 [project.optional-dependencies]
 wcs = ["astropy>=5.0"]
@@ -87,9 +88,10 @@ ASTAP_STATIC_RUNTIME = "OFF"
 # those libraries into the wheel, which is what delocate refused: Homebrew builds
 # for the runner's own macOS, far newer than a wheel may target.
 #
-# FITS, Rice .fz, Netpbm and BMP need nothing beyond the compiler and are the
-# formats this is for. Anything else is a couple of lines of Pillow or astropy
-# away, and solve() takes the array.
+# FITS, Rice .fz, Netpbm and BMP need nothing beyond the compiler and stay in
+# C++. The formats these switches turn off are read by Pillow and rawpy instead,
+# which ship their own wheels on every platform this builds for - see
+# faster_astap/_imageio.py, where the ownership is fixed rather than detected.
 ASTAP_ZLIB = "OFF"
 ASTAP_PNG = "OFF"
 ASTAP_JPEG = "OFF"

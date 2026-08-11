@@ -11,7 +11,7 @@ from __future__ import annotations
 import os
 from typing import Any, Callable, Optional, Sequence, Union
 
-from . import _core
+from . import _core, _imageio
 from .results import Solution, from_outcome
 
 PathLike = Union[str, "os.PathLike[str]"]
@@ -35,12 +35,15 @@ def find_databases() -> list:
 
 
 def supported_image_extensions() -> str:
-    """Image file extensions this build can read, space separated.
+    """Image file extensions this installation can read, space separated.
 
-    Empty when the extension was built without image support, in which case
-    `solve()` takes arrays only.
+    Which decoder reads what is fixed rather than detected, so this varies only
+    with what is installed alongside: FITS, Netpbm and BMP come from the C++
+    extension, PNG, JPEG and TIFF from Pillow, and the raw camera formats from
+    rawpy. Empty when none of the three is available, in which case `solve()`
+    takes arrays only.
     """
-    return _core.supported_image_extensions()
+    return _imageio.supported_extensions()
 
 
 class _Solver:
@@ -95,12 +98,7 @@ class _Solver:
 
     def _solve_file(self, path: PathLike, **kwargs) -> Solution:
         """Reads a file and solves the array, so both solvers share one path."""
-        if not _core.has_image_io:
-            raise SolveError(
-                "this build reads no image files; pass an array instead "
-                "(astropy.io.fits or your own loader)"
-            )
-        pixels, meta = _core.load_image_file(os.fspath(path))
+        pixels, meta = _imageio.load(path)
         kwargs.setdefault("label", os.fspath(path))
         return pixels, meta, kwargs
 
