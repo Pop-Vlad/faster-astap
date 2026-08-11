@@ -29,8 +29,8 @@ Usage:
     python3 tools/index_cache_bench.py -d db img.fits -- -fov 0.15 -norefine
 
 Linux only: it needs posix_fadvise(DONTNEED) and mincore(). Nothing else may
-hold the index mapped while it runs — stop astap_index_server first, or the
-eviction silently does nothing and every run reports as warm.
+hold the index mapped while it runs, or the eviction silently does nothing and
+every run reports as warm.
 
 Only the standard library is used.
 """

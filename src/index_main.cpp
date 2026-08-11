@@ -11,7 +11,8 @@
 // earlier one are read back and only the new ones are built.
 //
 // The per image work itself lives in SolveService, which is also what the
-// resident server runs, so the two produce the same output for the same image.
+// N.I.N.A. front end runs, so the two produce the same output for the same
+// image.
 
 // <chrono> went with the timing, which moved into SolveService; <cctype> stays,
 // the option parser below needs isdigit.
@@ -74,7 +75,8 @@ namespace {
         "-nocache {build in memory, do not read or write a cache}\n"
         "-cacheinfo {report the cache that would be used, then exit}\n"
         "\n"
-        "To keep the index resident between solves, see astap_index_server -h.\n"
+        "For an imaging application that launches a solver per frame with ASTAP's\n"
+        "options, see astap_nina_solve -h.\n"
         "\n"
         "The solver result is written to filename.ini and, with -wcs, to filename.wcs.\n"
         "\n"

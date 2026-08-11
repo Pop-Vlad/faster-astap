@@ -2,7 +2,6 @@ using NINA.Plugin;
 using NINA.Plugin.Interfaces;
 using NINA.Profile;
 using NINA.Profile.Interfaces;
-using NINA.WPF.Base.Interfaces.ViewModel;
 using System;
 using System.Collections.Generic;
 using System.ComponentModel;
@@ -18,20 +17,21 @@ using System.Windows.Input;
 namespace FasterAstap {
 
     /// <summary>
-    /// Makes N.I.N.A. plate solve against a whole-sky quad index held in memory.
+    /// Makes N.I.N.A. plate solve against a whole-sky quad index instead of
+    /// searching the sky.
     ///
     /// N.I.N.A. 3.x has no extension point for plate solvers: PlateSolverEnum is a
     /// closed set and PlateSolverFactory switches on it. What it does offer is that
     /// its ASTAP solver is a CLI solver — it launches whatever executable
     /// PlateSolveSettings.ASTAPLocation names, passes ASTAP's options, and reads the
-    /// .ini written beside the image. astap_index_server takes those options and
+    /// .ini written beside the image. astap_nina_solve takes those options and
     /// writes that .ini, so pointing that setting at it is the whole integration.
     ///
-    /// This class is therefore not a solver. It is the part that keeps the index
-    /// warm and the settings straight: it starts the server when N.I.N.A. starts,
-    /// writes the configuration the fixed option set cannot carry, and swaps the
-    /// ASTAP path over — keeping the old value so that turning the plugin off puts
-    /// real ASTAP back exactly as it was.
+    /// This class is therefore not a solver, and it is not a supervisor either:
+    /// nothing of this plugin runs while a solve does. It writes the configuration
+    /// the fixed option set cannot carry, and swaps the ASTAP path over — keeping
+    /// the old value so that turning the plugin off puts real ASTAP back exactly as
+    /// it was.
     /// </summary>
     [Export(typeof(IPluginManifest))]
     public class FasterAstapPlugin : PluginBase, INotifyPropertyChanged {
@@ -39,9 +39,9 @@ namespace FasterAstap {
 
         private readonly IProfileService profileService;
         private readonly IPluginOptionsAccessor settings;
-        private readonly IndexServer server;
-        private IndexServerStatus status = new IndexServerStatus();
+        private readonly Solver solver;
         private string activity = "";
+        private bool busy;
 
         [ImportingConstructor]
         public FasterAstapPlugin(IProfileService profileService) {
@@ -49,18 +49,19 @@ namespace FasterAstap {
             settings = new PluginOptionsAccessor(profileService, Guid.Parse(Identifier));
 
             var here = Path.GetDirectoryName(Assembly.GetExecutingAssembly().Location) ?? ".";
-            server = new IndexServer(Path.Combine(here, "astap_index_server.exe"));
+            solver = new Solver(Path.Combine(here, "astap_nina_solve.exe"));
 
-            RefreshCommand = new DelegateCommand(() => Forget(RefreshStatusAsync()));
-            StartServerCommand = new DelegateCommand(() => Forget(StartServerAsync()));
-            StopServerCommand = new DelegateCommand(() => Forget(StopServerAsync()));
-            CleanUpCommand = new DelegateCommand(() => Forget(CleanUpAsync()));
+            RefreshCommand = new DelegateCommand(Refresh);
+            // Both of these run the solver or delete gigabytes, so neither is
+            // allowed to start while the other is still going.
+            PrepareCommand = new DelegateCommand(() => Forget(PrepareAsync()), () => !busy);
+            CleanUpCommand = new DelegateCommand(() => Forget(CleanUpAsync()), () => !busy);
 
             profileService.ProfileChanged += OnProfileChanged;
 
-            // The settings are per profile and so is ASTAPLocation, so everything
-            // below has to be redone when the profile changes.
-            Forget(ApplyAsync(startServer: true));
+            // Done now, and again on every profile change: the settings are per
+            // profile, and so is ASTAPLocation.
+            Apply();
         }
 
         /// <summary>
@@ -69,10 +70,9 @@ namespace FasterAstap {
         ///
         /// The ASTAP path is put back on every exit, not only on uninstall. That is
         /// the property that makes uninstalling safe without a hook for it: the path
-        /// points here only while this is loaded and serving, so a plugin folder that
-        /// disappears between one run and the next cannot stand the setting up
-        /// against an executable that is no longer there. It is re-adopted on the
-        /// next start, once the index is resident again.
+        /// points here only while this is loaded, so a plugin folder that disappears
+        /// between one run and the next cannot leave the setting standing against an
+        /// executable that is no longer there. It is re-adopted on the next start.
         /// </summary>
         public override Task Teardown() {
             profileService.ProfileChanged -= OnProfileChanged;
@@ -91,20 +91,9 @@ namespace FasterAstap {
             // the part that would cost a night, so that happens above, on every
             // exit, without consulting this.
             var uninstalled = !SolverPresent;
-
-            if (StopServerOnExit || uninstalled) {
-                try {
-                    server.StopAsync().Wait(TimeSpan.FromSeconds(5));
-                } catch (Exception) {
-                    // Going away regardless. The server also watches this process and
-                    // exits when it does, so a missed stop costs seconds, not a
-                    // stranded three gigabytes.
-                }
-            }
-
             if (uninstalled) {
-                server.DeleteGeneratedFiles();
-                if (RemoveCacheOnUninstall) IndexServer.DeleteCache(CacheDirectory, out _);
+                solver.DeleteGeneratedFiles();
+                if (RemoveCacheOnUninstall) Solver.DeleteCache(CacheDirectory, out _);
             }
             return base.Teardown();
         }
@@ -114,11 +103,8 @@ namespace FasterAstap {
             RaisePropertyChanged(nameof(Tiers));
             RaisePropertyChanged(nameof(MaxTier));
             RaisePropertyChanged(nameof(Threads));
-            RaisePropertyChanged(nameof(IdleExitMinutes));
             RaisePropertyChanged(nameof(UseForPlateSolving));
-            RaisePropertyChanged(nameof(StartWithNina));
-            RaisePropertyChanged(nameof(StopServerOnExit));
-            Forget(ApplyAsync(startServer: false));
+            Apply();
         }
 
         // --- settings ----------------------------------------------------------
@@ -136,20 +122,21 @@ namespace FasterAstap {
             set {
                 settings.SetValueString(nameof(DatabaseDirectory), value ?? "");
                 RaisePropertyChanged();
-                Forget(ApplyAsync(startServer: false));
+                Apply();
             }
         }
 
         /// <summary>
-        /// Depth ladder to hold, empty for the default twelve rungs. Fewer rungs
-        /// is less memory: the two deepest are two thirds of the whole ladder.
+        /// Depth ladder to use, empty for the default twelve rungs. Fewer rungs is
+        /// less disk and less of the page cache spent on this: the two deepest are
+        /// two thirds of the whole ladder.
         /// </summary>
         public string Tiers {
             get => settings.GetValueString(nameof(Tiers), "");
             set {
                 settings.SetValueString(nameof(Tiers), value ?? "");
                 RaisePropertyChanged();
-                Forget(ApplyAsync(startServer: false));
+                Apply();
             }
         }
 
@@ -163,7 +150,7 @@ namespace FasterAstap {
             set {
                 settings.SetValueDouble(nameof(MaxTier), value);
                 RaisePropertyChanged();
-                Forget(ApplyAsync(startServer: false));
+                Apply();
             }
         }
 
@@ -172,48 +159,7 @@ namespace FasterAstap {
             set {
                 settings.SetValueInt32(nameof(Threads), value);
                 RaisePropertyChanged();
-                Forget(ApplyAsync(startServer: false));
-            }
-        }
-
-        /// <summary>
-        /// Stop a server that has not been asked to solve anything for this many
-        /// minutes. Zero leaves it up, which is the right answer while imaging.
-        /// </summary>
-        public int IdleExitMinutes {
-            get => settings.GetValueInt32(nameof(IdleExitMinutes), 0);
-            set {
-                settings.SetValueInt32(nameof(IdleExitMinutes), value);
-                RaisePropertyChanged();
-                Forget(ApplyAsync(startServer: false));
-            }
-        }
-
-        /// <summary>
-        /// Read the index into memory as soon as N.I.N.A. starts, rather than on the
-        /// first solve that needs it.
-        ///
-        /// This is the point of the plugin: the warm-up is seconds, and paying it
-        /// while N.I.N.A. is still starting up costs nothing, whereas paying it on
-        /// the first solve of the night puts it in the way of something that is
-        /// waiting. Separate from taking the ASTAP path over, because holding the
-        /// index ready is useful even when something else is doing the solving —
-        /// the command line client will use a running server whoever launched it.
-        /// </summary>
-        public bool StartWithNina {
-            get => settings.GetValueBoolean(nameof(StartWithNina), true);
-            set {
-                settings.SetValueBoolean(nameof(StartWithNina), value);
-                RaisePropertyChanged();
-                if (value) Forget(ApplyAsync(startServer: true));
-            }
-        }
-
-        public bool StopServerOnExit {
-            get => settings.GetValueBoolean(nameof(StopServerOnExit), true);
-            set {
-                settings.SetValueBoolean(nameof(StopServerOnExit), value);
-                RaisePropertyChanged();
+                Apply();
             }
         }
 
@@ -240,8 +186,7 @@ namespace FasterAstap {
         /// off restores whatever it was before.
         ///
         /// On by default, so that installing the plugin is enough and nobody has to
-        /// find a checkbox to get what they installed it for. What it does not do is
-        /// take the path over the moment it is switched on: see AdoptIfReady.
+        /// find a checkbox to get what they installed it for.
         /// </summary>
         public bool UseForPlateSolving {
             get => settings.GetValueBoolean(nameof(UseForPlateSolving), true);
@@ -249,7 +194,7 @@ namespace FasterAstap {
                 settings.SetValueBoolean(nameof(UseForPlateSolving), value);
                 RaisePropertyChanged();
                 if (value) {
-                    Forget(ApplyAsync(startServer: true));
+                    Apply();
                 } else {
                     RestoreAstapLocation();
                     Activity = "";
@@ -259,42 +204,34 @@ namespace FasterAstap {
 
         // --- what is going on --------------------------------------------------
 
-        public string SolverPath => server.ExecutablePath;
-        public bool SolverPresent => File.Exists(server.ExecutablePath);
+        public string SolverPath => solver.ExecutablePath;
+        public bool SolverPresent => solver.Present;
+        public string LogPath => solver.LogPath;
         public string AstapLocationInUse =>
             profileService?.ActiveProfile?.PlateSolveSettings?.ASTAPLocation ?? "";
         public string OriginalAstapLocation => settings.GetValueString(OriginalAstapLocationKey, "");
 
-        public IndexServerStatus Status {
-            get => status;
-            private set {
-                status = value;
-                RaisePropertyChanged();
-                RaisePropertyChanged(nameof(StatusSummary));
-                RaisePropertyChanged(nameof(TimingSummary));
-                RaisePropertyChanged(nameof(CacheDirectory));
-                RaisePropertyChanged(nameof(CacheSummary));
-            }
-        }
-
         public string StatusSummary {
             get {
                 if (!SolverPresent)
-                    return "astap_index_server.exe is missing from the plugin folder.";
-                if (!Status.Running) return "Not running. The index is not in memory.";
-                return string.Format(CultureInfo.InvariantCulture,
-                                     "Ready — {0}, {1} tiers, {2:0.00} GB in memory (pid {3}).",
-                                     string.IsNullOrEmpty(Status.Database) ? "no database" : Status.Database,
-                                     Status.Tiers, Status.Bytes / 1e9, Status.ProcessId);
+                    return "astap_nina_solve.exe is missing from the plugin folder.";
+                if (!UseForPlateSolving)
+                    return "Installed, and not in use: plate solving is left with ASTAP.";
+                if (!SamePath(AstapLocationInUse, solver.ExecutablePath))
+                    return "Installed, but N.I.N.A.'s ASTAP path points somewhere else.";
+                return "In use. N.I.N.A. plate solves against the quad index.";
             }
         }
 
-        public string TimingSummary {
+        /// <summary>
+        /// The last lines the solver wrote. N.I.N.A. runs it with no console
+        /// anybody can see, so its log is where a solve — or a failure to find the
+        /// star database — is reported.
+        /// </summary>
+        public string RecentLog {
             get {
-                if (!Status.Running || Status.Solves == 0) return "No solves yet this session.";
-                return string.Format(CultureInfo.InvariantCulture,
-                                     "{0} solves, median {1:0.#} ms, last {2:0.#} ms.",
-                                     Status.Solves, Status.MedianMs, Status.LastMs);
+                var tail = solver.RecentLog(6);
+                return string.IsNullOrEmpty(tail) ? "Nothing solved yet." : tail;
             }
         }
 
@@ -306,113 +243,111 @@ namespace FasterAstap {
             }
         }
 
-        /// <summary>
-        /// Where the index rungs are cached. A running server is the authority,
-        /// since it may have been pointed elsewhere; otherwise the default applies.
-        /// </summary>
-        public string CacheDirectory =>
-            !string.IsNullOrWhiteSpace(Status.CachePath) ? Status.CachePath
-                                                        : IndexServer.DefaultCacheDirectory;
+        /// <summary>Where the index rungs are cached.</summary>
+        public string CacheDirectory => Solver.DefaultCacheDirectory;
 
         public string CacheSummary {
             get {
-                var bytes = IndexServer.DirectorySize(CacheDirectory);
-                if (bytes == 0) return "No index cache on disk. " + CacheDirectory;
+                var bytes = Solver.DirectorySize(CacheDirectory);
+                if (bytes == 0)
+                    return "No index cache on disk yet — the first solve builds one, which takes " +
+                           "minutes. " + CacheDirectory;
                 return string.Format(CultureInfo.InvariantCulture, "{0:0.00} GB cached in {1}",
                                      bytes / 1e9, CacheDirectory);
             }
         }
 
         public ICommand RefreshCommand { get; }
-        public ICommand StartServerCommand { get; }
-        public ICommand StopServerCommand { get; }
+        public ICommand PrepareCommand { get; }
         public ICommand CleanUpCommand { get; }
 
         /// <summary>
+        /// Builds or reads the index without solving anything, so that a ladder
+        /// that has never been built is paid for now rather than on the first frame
+        /// of a night.
+        /// </summary>
+        private async Task PrepareAsync() {
+            if (busy) return;
+            if (!SolverPresent) {
+                Activity = "No solver to run.";
+                return;
+            }
+            busy = true;
+            Activity = "Reading the index; building any rung that has never been built…";
+            try {
+                Activity = await solver.PrepareAsync();
+            } finally {
+                busy = false;
+                Refresh();
+            }
+        }
+
+        /// <summary>
         /// Undoes everything this plugin has done to the machine, without waiting
-        /// for an uninstall: the ASTAP path goes back, the server stops, and the
-        /// cache and the generated files are removed. What it cannot do is delete
-        /// the plugin itself, so it says what is left to do.
+        /// for an uninstall: the ASTAP path goes back, and the cache and the
+        /// generated files are removed. What it cannot do is delete the plugin
+        /// itself, so it says what is left to do.
         /// </summary>
         private async Task CleanUpAsync() {
-            RestoreAstapLocation();
-            await server.StopAsync();
-            await Task.Delay(500);
-            var directory = CacheDirectory;
-            var freed = IndexServer.DirectorySize(directory);
-            server.DeleteGeneratedFiles();
-            var done = IndexServer.DeleteCache(directory, out var error);
-            await RefreshStatusAsync();
-            RaisePropertyChanged(nameof(CacheSummary));
-            Activity = done
-                           ? string.Format(CultureInfo.InvariantCulture,
-                                           "Removed {0:0.00} GB and restored the ASTAP path. The plugin itself is removed from Plugins ▸ Installed.",
-                                           freed / 1e9)
-                           : "Restored the ASTAP path, but the cache could not be deleted: " + error;
+            if (busy) return;
+            busy = true;
+            try {
+                RestoreAstapLocation();
+                var directory = CacheDirectory;
+                var freed = Solver.DirectorySize(directory);
+                solver.DeleteGeneratedFiles();
+                // Several gigabytes of small files: off the interface thread, so
+                // the options page is not frozen while they go.
+                var error = await Task.Run(() => Solver.DeleteCache(directory, out var e) ? "" : e);
+                Activity = error.Length == 0
+                               ? string.Format(CultureInfo.InvariantCulture,
+                                               "Removed {0:0.00} GB and restored the ASTAP path. The plugin itself is removed from Plugins ▸ Installed.",
+                                               freed / 1e9)
+                               : "Restored the ASTAP path, but the cache could not be deleted: " + error;
+            } finally {
+                busy = false;
+                Refresh();
+            }
         }
 
         // --- doing it ----------------------------------------------------------
 
-        private async Task ApplyAsync(bool startServer) {
+        /// <summary>
+        /// Writes the settings file and takes the ASTAP path over.
+        ///
+        /// Nothing has to be warmed up first. The solver reads the index cache
+        /// through a memory mapping, so a solve that follows another one finds the
+        /// pages it needs already in the operating system's cache and never touches
+        /// the disk for them — which is what a resident server used to be for. The
+        /// one cost that is not milliseconds is building a ladder that has never
+        /// been built, and the options page has a button for paying it deliberately.
+        /// </summary>
+        private void Apply() {
             try {
-                if (SolverPresent)
-                    server.WriteConfig(DatabaseDirectory, Tiers, MaxTier, Threads, IdleExitMinutes);
-                // Wanting the path taken over implies wanting something to hand it
-                // to, so either setting is reason enough to start the server.
-                if (startServer && SolverPresent && (StartWithNina || UseForPlateSolving))
-                    await StartServerAsync();
-                else await RefreshStatusAsync();
-                AdoptIfReady();
+                if (!SolverPresent) {
+                    Activity = "";
+                    Refresh();
+                    return;
+                }
+                // An installation updated over the version that shipped a
+                // resident server may still have it, and still be running it.
+                // Off this thread: asking it to stop waits on a process that has
+                // a solve to finish, and this runs while N.I.N.A. is starting.
+                Forget(Task.Run(() => solver.RemoveLegacyServer()));
+                solver.WriteConfig(DatabaseDirectory, Tiers, MaxTier, Threads);
+                if (UseForPlateSolving) ApplyAstapLocation();
+                Activity = "";
+                Refresh();
             } catch (Exception e) {
                 Activity = "Could not apply the settings: " + e.Message;
             }
         }
 
-        /// <summary>
-        /// Takes the ASTAP path over, but only once there is an index in memory to
-        /// take it over with.
-        ///
-        /// The order matters more than it looks. Claiming the path first and warming
-        /// up second would leave N.I.N.A. pointed at a solver that cannot answer for
-        /// as long as the warm-up takes — seconds when the ladder is cached, minutes
-        /// the first time it has to be built, and forever if the star database is
-        /// wrong. A plate solve landing in that window is a lost frame, so the path
-        /// is left alone until a solve would succeed, and the options page says so.
-        /// </summary>
-        private void AdoptIfReady() {
-            if (!UseForPlateSolving || !SolverPresent) return;
-            if (!Status.Running || Status.Tiers == 0) {
-                Activity = "Plate solving is left with ASTAP until the index is in memory.";
-                return;
-            }
-            ApplyAstapLocation();
-            Activity = "";
-        }
-
-        private async Task StartServerAsync() {
-            if (!SolverPresent) {
-                Activity = "No solver to start.";
-                return;
-            }
-            Activity = "Reading the index into memory…";
-            // Reading the whole ladder off disk is seconds; building it the first
-            // time, on a machine that has never done it, is minutes.
-            var ok = await server.StartAsync(TimeSpan.FromMinutes(30));
-            Activity = ok ? "" : "The server did not come up. See " + server.LogPath;
-            await RefreshStatusAsync();
-            AdoptIfReady();
-        }
-
-        private async Task StopServerAsync() {
-            Activity = "Stopping…";
-            await server.StopAsync();
-            await Task.Delay(500);
-            Activity = "";
-            await RefreshStatusAsync();
-        }
-
-        private async Task RefreshStatusAsync() {
-            Status = await server.GetStatusAsync();
+        private void Refresh() {
+            RaisePropertyChanged(nameof(StatusSummary));
+            RaisePropertyChanged(nameof(RecentLog));
+            RaisePropertyChanged(nameof(CacheSummary));
+            RaisePropertyChanged(nameof(AstapLocationInUse));
         }
 
         /// <summary>
@@ -424,20 +359,29 @@ namespace FasterAstap {
             var plateSolve = profileService?.ActiveProfile?.PlateSolveSettings;
             if (plateSolve == null || !SolverPresent) return;
             var current = plateSolve.ASTAPLocation ?? "";
-            if (SamePath(current, server.ExecutablePath)) return;
-            if (!string.IsNullOrWhiteSpace(current))
+            if (SamePath(current, solver.ExecutablePath)) return;
+            // A path left pointing at the resident server of an earlier version
+            // is one of ours, not a real ASTAP: remembering it as the original
+            // would replace the path this is supposed to be able to give back.
+            if (!string.IsNullOrWhiteSpace(current) && !SamePath(current, solver.LegacyServerPath))
                 settings.SetValueString(OriginalAstapLocationKey, current);
-            plateSolve.ASTAPLocation = server.ExecutablePath;
+            plateSolve.ASTAPLocation = solver.ExecutablePath;
             RaisePropertyChanged(nameof(AstapLocationInUse));
         }
 
         private void RestoreAstapLocation() {
             var plateSolve = profileService?.ActiveProfile?.PlateSolveSettings;
             if (plateSolve == null) return;
-            if (!SamePath(plateSolve.ASTAPLocation ?? "", server.ExecutablePath)) return;
+            var current = plateSolve.ASTAPLocation ?? "";
+            // The earlier version's server counts as ours here too, so a profile
+            // that was pointed at it gets the real ASTAP back rather than a path
+            // to an executable this no longer installs.
+            if (!SamePath(current, solver.ExecutablePath) &&
+                !SamePath(current, solver.LegacyServerPath)) return;
             var original = settings.GetValueString(OriginalAstapLocationKey, "");
             plateSolve.ASTAPLocation = original;
             RaisePropertyChanged(nameof(AstapLocationInUse));
+            RaisePropertyChanged(nameof(StatusSummary));
         }
 
         /// <summary>
@@ -453,7 +397,8 @@ namespace FasterAstap {
             };
             foreach (var candidate in candidates) {
                 if (string.IsNullOrWhiteSpace(candidate)) continue;
-                if (SamePath(candidate, server.ExecutablePath)) continue;
+                if (SamePath(candidate, solver.ExecutablePath) ||
+                    SamePath(candidate, solver.LegacyServerPath)) continue;
                 var directory = Path.GetDirectoryName(candidate);
                 if (!string.IsNullOrEmpty(directory) && Directory.Exists(directory) &&
                     HasStarDatabase(directory))

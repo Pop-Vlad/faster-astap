@@ -1,12 +1,11 @@
 # N.I.N.A. plugin
 
-A plugin for [N.I.N.A.](https://nighttime-imaging.eu/) that makes it plate solve against the resident quad index instead
+A plugin for [N.I.N.A.](https://nighttime-imaging.eu/) that makes it plate solve against the whole-sky quad index instead
 of ASTAP.
 
-This directory is a separate module holding the whole integration: the resident solver process, the local channel it is
-spoken to over, and the C# plugin. Nothing under `../src` or `../include` refers to anything here — the module consumes
-the solver libraries and adds to them. `astap_solve` and
-`astap_index_solve` are what they were, and
+This directory is a separate module holding the whole integration: the solver N.I.N.A. launches, and the C# plugin that
+puts it in ASTAP's place. Nothing under `../src` or `../include` refers to anything here — the module consumes the solver
+libraries and adds to them. `astap_solve` and `astap_index_solve` are what they were, and
 
     cmake -S . -B build -DASTAP_NINA_INTEGRATION=OFF
 
@@ -25,68 +24,97 @@ What N.I.N.A. *does* offer is that its ASTAP solver is a CLI solver: it launches
 
     -f "<image>" -z <bin> -fov <deg> -r <radius> -ra <hours> -spd <dec+90> -s <stars>
 
-and reads the `.ini` written next to the image. `astap_index_server` takes that option set and writes that `.ini`. The
+and reads the `.ini` written next to the image. `astap_nina_solve` takes that option set and writes that `.ini`. The
 plugin therefore:
 
-- ships `astap_index_server.exe` in its own plugin folder,
+- ships `astap_nina_solve.exe` in its own plugin folder,
 - writes `faster-astap.ini` next to it, holding the star database directory and the depth ladder — the settings ASTAP's
   option set has nowhere to carry,
-- starts the server when N.I.N.A. starts, so the index is already in memory before the first solve of the night,
 - points `ASTAPLocation` at the shipped executable, keeping the previous value so that disabling the plugin puts real
   ASTAP back,
-- shows what is resident, and how long recent solves took.
+- shows what is cached, and what the last solves did.
 
 Everything that goes through N.I.N.A.'s plate solving path is covered by this, including the Framing Assistant's "solve
 this loaded image" prompt — which is the case that benefits most, since an image loaded from disk has no pointing hint
 and is therefore a blind solve.
 
-## `astap_index_server`
+Nothing of the plugin runs while a solve does. N.I.N.A. starts the executable, the executable writes the `.ini` and
+exits.
 
-The executable N.I.N.A. actually launches. One binary in two roles:
+## `astap_nina_solve`
 
-    astap_index_server -serve        hold the index and answer requests
-    astap_index_server -f image.fits solve through it, taking ASTAP's options
-    astap_index_server -status       what is resident, and recent solve times
-    astap_index_server -stop         ask a running server to exit
+The executable N.I.N.A. actually launches. It is `astap_index_solve` with the two differences that come of being
+launched by a program rather than typed by a person: it accepts and ignores the options ASTAP takes that an index solve
+has no use for (`-r`, `-ra`, `-spd`), and it reads the settings that option set cannot carry from `faster-astap.ini`
+beside it. The `.ini` it writes is byte for byte what `astap_index_solve` writes for the same image.
 
-Measured on a 6000×4000 DSLR frame against D80, all twelve tiers resident (3.10 GB):
+    astap_nina_solve -f image.fits     solve, taking ASTAP's options
+    astap_nina_solve -prepare          build or read the index and exit
+    astap_nina_solve -h                the whole option set
+
+Measured here on a 1024×1024 corpus frame against D80 with the full twelve-tier ladder (3.10 GB) cached:
 
 |                                            | wall clock |
 |--------------------------------------------|------------|
-| `astap_index_solve`, one invocation        | 4.43 s     |
-| `astap_index_server`, index not yet loaded | 3.46 s     |
-| `astap_index_server`, index resident       | **0.13 s** |
+| `astap_index_solve`, one invocation        | 0.61 s     |
+| `astap_nina_solve`, one invocation         | 0.60 s     |
+| `astap_nina_solve -prepare` (no image)     | 0.03 s     |
 
-The solve itself is 7 ms of that; the rest is starting a process and reading a 48 MB file. The `.ini` is byte for byte
-what `astap_index_solve` writes for the same image.
+The two are the same because they run the same code. The third line is the point: mapping the whole 3.10 GB ladder and
+reporting it ready costs 30 ms in a process that has just started, so a solve pays essentially nothing for having the
+index — the rest of that 0.6 s is reading the image, detecting stars and sweeping the tiers.
 
-Settings that ASTAP's option set cannot carry are read from `faster-astap.ini`
-next to the executable — the star database directory, the depth ladder, tolerance, cache location, endpoint, thread
-count, and whether a client may start a server itself. When no server is running and none can be started, the client
-solves in its own process rather than failing: slow, but a slow solve beats a lost frame in the middle of a night.
+### Why there is no longer a server
+
+Earlier versions shipped `astap_index_server`: a process that held the index in memory and answered solve requests over
+a named pipe, because reading a 2.7 GB ladder into a buffer took 1.65 seconds and the solve after it took 5 ms — a cost
+worth paying once for a batch and worth avoiding entirely for an imaging application, which solves one frame at a time,
+minutes apart, in a fresh process every time.
+
+The index cache is now memory mapped rather than read into a buffer (see `MappedFile`, and the reasons in
+`include/astap/mapped_file.h`), and that removes the cost the server existed to amortise. Mapping a file is not reading
+it: the pages a solve touches are faulted in from the operating system's page cache, they stay there when the process
+exits, and the next process maps the same file and finds them resident. Nothing has to hold them — not holding them is
+what a page cache is for. What is left for a server to save is the process start, and that is the 30 ms above.
+
+So the server is gone, and with it the named pipe, the wire format, the parent-process watchdog, the idle timeout, and
+every failure mode that came of a second process holding gigabytes: a stranded server after a crash, a solve arriving
+while the server was still warming up, a client that could not reach one. A plate solve is now one program launch that
+either writes an `.ini` or does not.
+
+Two costs are real and were worth naming rather than hiding:
+
+- **The first solve after the machine boots** faults its pages in off the disk, and is slower than the ones after it by
+  whatever that disk charges. Any later solve finds them cached.
+- **A ladder that has never been built** costs minutes, once per star database. That used to happen while N.I.N.A.
+  started up; now it would happen on the first frame that needs it, which is a worse place for it. **Build the index
+  now** on the options page runs `-prepare` and pays it at a chosen moment instead.
+
+Settings that ASTAP's option set cannot carry are read from `faster-astap.ini` next to the executable — the star
+database directory, the depth ladder, tolerance, cache location, thread count, and the log file. The plugin writes that
+file; a person can edit it, and a rebuild of the plugin does not overwrite it.
 
 ## Layout
 
     nina-plugin/
       README.md                        this file
       CHANGELOG.md
-      CMakeLists.txt                   builds astap_index_server
+      CMakeLists.txt                   builds astap_nina_solve
       install.ps1                      puts the built plugin where N.I.N.A. looks
       install.cmd                      the same, for double-clicking
       uninstall.cmd                    install.ps1 -Uninstall, for double-clicking
-      server/index_server_main.cpp     the server, and the ASTAP-compatible client
-      server/ipc.cpp, server/ipc.h     named pipe on Windows, Unix socket elsewhere
-      server/version.rc                the version N.I.N.A. checks before it will call us
+      solver/nina_solve_main.cpp       the ASTAP-compatible front end
+      solver/version.rc                the version N.I.N.A. checks before it will call us
       FasterAstap.sln                  the plugin solution
       plugin/FasterAstapPlugin.cs      the manifest: settings, lifecycle, ASTAP path swap
-      plugin/IndexServer.cs            starts and stops the server, and asks its status
+      plugin/Solver.cs                 the settings file, the log, and the cache on disk
       plugin/Options.xaml              the options page
 
-The two halves are built by different tools and share nothing but the wire format in `IndexServer.cs` and `ipc.cpp`.
+The two halves are built by different tools and share nothing but the contents of `faster-astap.ini`.
 
 ## Building
 
-The server comes from the parent CMake build, into `build/nina-plugin/`. Build it first — the plugin build copies the
+The solver comes from the parent CMake build, into `build/nina-plugin/`. Build it first — the plugin build copies the
 executable into its own output, and warns rather than fails if it is not there yet.
 
 The plugin needs the .NET 8 SDK (a newer SDK is fine, the target framework is what matters: N.I.N.A. 3.x runs on .NET 8
@@ -116,64 +144,43 @@ folder existed and is migrated *into*
 
 Run it again after a rebuild and it updates in place. Only the four files are replaced; `faster-astap.ini` and
 `faster-astap.log`, which the plugin writes into that same folder, are left as they are, so settings survive an update.
+Installing over a version that shipped `astap_index_server.exe` stops a copy of it that is still running and removes the
+file, since nothing will launch it again.
 
 Nothing is written to `Program Files` and no administrator rights are involved. N.I.N.A. holds the assembly open while
-it runs, so it has to be closed first — the script checks, and says so, rather than failing halfway through a copy. It
-also asks a leftover `astap_index_server` to stop before overwriting it, which is the state a crashed N.I.N.A. leaves
-behind.
+it runs, so it has to be closed first — the script checks, and says so, rather than failing halfway through a copy.
 
 What it takes:
 
-|                |                                                               |
-|----------------|---------------------------------------------------------------|
-| `-Source`      | where the build output is, if not `plugin\bin\x64\Release`    |
-| `-Destination` | the plugin folder, if not the one above                       |
-| `-Uninstall`   | remove the plugin folder instead                              |
-| `-RemoveCache` | with `-Uninstall`, delete the index cache as well             |
-| `-Force`       | kill an `astap_index_server` that ignored the request to stop |
-| `-WhatIf`      | say what would be copied or deleted, and do neither           |
+|                |                                                                    |
+|----------------|--------------------------------------------------------------------|
+| `-Source`      | where the build output is, if not `plugin\bin\x64\Release`          |
+| `-Destination` | the plugin folder, if not the one above                            |
+| `-Uninstall`   | remove the plugin folder instead                                   |
+| `-RemoveCache` | with `-Uninstall`, delete the index cache as well                  |
+| `-Force`       | kill an old `astap_index_server` that ignored the request to stop  |
+| `-WhatIf`      | say what would be copied or deleted, and do neither                |
 
 The star database is not copied there. It is gigabytes, and there is usually already one beside the existing ASTAP
 installation, which is where the plugin looks first.
 
 ## Using it
 
-Nothing, if the defaults suit. On the first start the plugin writes its settings, reads the index into memory, and then
-points `ASTAPLocation` at its own solver.
+Nothing, if the defaults suit. On the first start the plugin writes its settings and points `ASTAPLocation` at its own
+solver.
 
-The order there is the whole design. The path is taken over **after** the index is resident, never before: warming up
-takes seconds when the ladder is cached and minutes the first time it has to be built, and a plate solve arriving in
-that window would otherwise reach a solver that cannot answer yet. Until then plate solving stays with whatever was
-configured, and the options page says so.
-
-Warming up during N.I.N.A.'s own startup is the point: it costs nothing there, where paying the same seconds on the
-first solve of the night makes something wait. That is what *read the index into memory when N.I.N.A. starts* does, and
-it is separate from taking the ASTAP path over — a resident index is useful even when something else is doing the
-solving, since any client finds a running server whoever launched it.
-
-Options ▸ Plugins ▸ Faster ASTAP shows what is resident, what recent solves cost, and which path is in force. Worth
+Options ▸ Plugins ▸ Faster ASTAP shows which path is in force, what is cached, and the last few lines the solver wrote —
+which is the only account of a solve there is, since N.I.N.A. launches it with no console anybody can see. Worth
 checking there:
 
 - the **database directory**, filled in from the ASTAP installation N.I.N.A. was already configured for, and only wrong
   if the `.1476` or `.290` files live somewhere else;
-- **depth tiers**, if the full ladder is more memory than you want to spend.
+- **depth tiers**, if the full ladder is more disk than you want to spend;
+- **Build the index now**, before the first session on a machine that has never built one — that is the one operation
+  here that takes minutes.
 
 Unticking **Use for plate solving**, or removing the plugin, puts the old path back. The solver dropdown will still say
 ASTAP — N.I.N.A. has no way to list a plugin there.
-
-## Shutting down, and shutting down badly
-
-The server is a second process holding gigabytes, so it must never outlive the application it was started for. Two
-mechanisms, because one of them is not enough:
-
-- N.I.N.A. closing normally runs the plugin's teardown, which asks the server to stop. It finishes the solve it is on,
-  releases the index, and exits.
-- N.I.N.A. crashing, or being killed, never reaches that. So the server is also given N.I.N.A.'s process id with
-  `-parent` and watches it: when that process ends, by whatever means, the server logs it and exits. Verified by killing
-  the parent outright — the memory comes back within a second or two.
-
-`-idle-exit` is a third line, off by default: a server that has been asked to solve nothing for N minutes stops on its
-own. It exists for a machine where something started a server outside of N.I.N.A. entirely.
 
 ## Removing it
 
@@ -182,8 +189,8 @@ next start, so by the time the removal is complete there is nothing of this plug
 Two things follow, and they are worth separating because one is guaranteed and the other is not.
 
 **The ASTAP path is always restored.** Not on uninstall — on *every* exit, before anything is checked or decided. The
-path points here only while the plugin is loaded and the index is resident, and it is re-adopted on the next start. So a
-plugin folder that disappears between one run and the next cannot leave
+path points here only while the plugin is loaded, and it is re-adopted on the next start. So a plugin folder that
+disappears between one run and the next cannot leave
 `ASTAPLocation` standing against a missing executable, however it disappeared. This is the failure that would actually
 cost you a night, and it does not depend on detecting anything.
 
@@ -191,7 +198,7 @@ cost you a night, and it does not depend on detecting anything.
 several gigabytes under
 `%localappdata%\faster-astap\cache`, put there deliberately so that it survives plugin updates. Deleting it needs the
 plugin to know it is being uninstalled, and what it actually knows is narrower — at teardown it looks for
-`astap_index_server.exe` beside its own assembly, and takes its absence to mean the folder has already been moved to
+`astap_nina_solve.exe` beside its own assembly, and takes its absence to mean the folder has already been moved to
 `PluginDeletion` while the session ran. That holds when you uninstall from a running N.I.N.A. and then close it. It does
 not hold if you delete the plugin folder while N.I.N.A. is closed, because then none of this code ever runs again. In
 that case the cache is simply left where it is.
@@ -200,8 +207,8 @@ Leaving a cache behind costs disk space and nothing else, so best effort is an a
 not be for the solver path.
 
 **Restore ASTAP and remove everything** on the options page is the reliable route:
-it restores the path, stops the server, and deletes the cache and the generated files there and then, with no inference
-involved. It cannot delete the plugin itself — N.I.N.A. does that afterwards.
+it restores the path and deletes the cache and the generated files there and then, with no inference involved. It cannot
+delete the plugin itself — N.I.N.A. does that afterwards.
 
 With N.I.N.A. already closed, the reliable route is the script, which has the same nothing-inferred property:
 

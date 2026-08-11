@@ -217,11 +217,12 @@ astap_index_solve -f image.fits [options] [more.fits ...]
 -cacheinfo  report which rungs are cached, then exit
 ```
 
-Passing several images to one invocation is much faster than one invocation per image: the index is read once.
+Passing several images to one invocation saves the per image process start, but not much else: the cache is mapped
+rather than read, so a fresh process finds the pages an earlier one touched still in the operating system's cache.
 
-An imaging application cannot do that - it solves one frame at a time, in a fresh process, minutes apart, so it pays the
-index read every single solve and never sees the 5 ms. Keeping the index in memory between those invocations is what [
-`nina-plugin/`](nina-plugin/README.md) is for. It is a module of its own and changes nothing here;
+An imaging application solves one frame at a time, in a fresh process, minutes apart, and needs the options and the
+`.ini` to be ASTAP's rather than these. That is what [`nina-plugin/`](nina-plugin/README.md) is for. It is a module of
+its own and changes nothing here;
 `-DASTAP_NINA_INTEGRATION=OFF` leaves it out of the build.
 
 #### The index cache

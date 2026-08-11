@@ -1,22 +1,21 @@
-// One image in, one .ini out, with the index ladder held between calls.
+// One image in, one .ini out, with the index ladder addressed between calls.
 //
-// The index solver's cost is lopsided: reading a 2.7 GB ladder takes 1.6 s and
-// the solve that follows takes 5 ms. A command line run pays the read every
-// time, which is the right trade for a batch and the wrong one for an imaging
-// application that solves a frame every few minutes. This class is the
-// separation of the two: `load` once, `solve` as often as you like.
+// Selecting the star database and getting hold of a ladder is work that belongs
+// to a run rather than to an image, so it happens once: `load` once, `solve` as
+// often as you like. The ladder is mapped rather than read, which is why a
+// process that does this for a single image is not paying for the whole of it -
+// see mapped_file.h.
 //
 // The whole per image pipeline lives here - binning, star detection, the tier
 // sweep, the second pass, the rescale back to original pixels and the .ini and
-// .wcs files - so that `astap_index_solve` and the resident server produce the
-// same output for the same image by construction rather than by agreement.
+// .wcs files - so that every front end produces the same output for the same
+// image by construction rather than by agreement.
 //
 // Not thread safe. `solve` reads the star database through a file handle and
 // tile cache that belong to this instance, so concurrent calls have to be
-// serialised by the caller (the server takes a mutex); the ladder itself is
-// immutable once loaded and could be shared, but the second pass is what makes
-// the difference between a 0.2 px and a 0.14 px solution and it needs the
-// database.
+// serialised by the caller; the ladder itself is immutable once loaded and
+// could be shared, but the second pass is what makes the difference between a
+// 0.2 px and a 0.14 px solution and it needs the database.
 
 #pragma once
 
@@ -146,8 +145,8 @@ namespace astap {
     bool refined = false;
 
     // What the command line front end would have printed for this image, in
-    // order. The server relays these to its client so a solve through the pipe
-    // reads like a solve without it.
+    // order. A caller that is not a command line - a plugin, a binding - gets
+    // the same account to log or to show.
     std::vector<std::string> messages;
   };
 

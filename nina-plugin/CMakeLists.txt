@@ -5,26 +5,23 @@
 # them; removing the directory, or turning ASTAP_NINA_INTEGRATION off, leaves
 # astap_solve and astap_index_solve exactly as they were.
 #
-# The C# plugin that goes with this executable is in src/ as well, and is built
-# by the .NET SDK rather than by CMake - see README.md.
+# The C# plugin that goes with this executable is in plugin/, and is built by
+# the .NET SDK rather than by CMake - see README.md.
 
 # The version resource is not decoration: N.I.N.A. reads the executable's
-# FileVersion before it will pass its default options. See server/version.rc.
+# FileVersion before it will pass its default options. See solver/version.rc.
 if (WIN32)
     enable_language(RC)
-    add_executable(astap_index_server
-            server/index_server_main.cpp
-            server/ipc.cpp
-            server/version.rc
+    add_executable(astap_nina_solve
+            solver/nina_solve_main.cpp
+            solver/version.rc
     )
 else ()
-    add_executable(astap_index_server
-            server/index_server_main.cpp
-            server/ipc.cpp
+    add_executable(astap_nina_solve
+            solver/nina_solve_main.cpp
     )
 endif ()
 
-target_include_directories(astap_index_server PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/server)
-target_link_libraries(astap_index_server PRIVATE astap_image)
+target_link_libraries(astap_nina_solve PRIVATE astap_image)
 
-install(TARGETS astap_index_server RUNTIME DESTINATION ${ASTAP_RUNTIME_DEST})
+install(TARGETS astap_nina_solve RUNTIME DESTINATION ${ASTAP_RUNTIME_DEST})

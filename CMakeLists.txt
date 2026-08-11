@@ -263,10 +263,10 @@ if (NOT SKBUILD)
 endif ()
 
 # --- the N.I.N.A. integration ------------------------------------------------
-# A module of its own, in nina-plugin/: a resident server that keeps the index in
-# memory between images, and the C# plugin that drives it. It consumes the
-# libraries above and adds nothing to them, so turning it off changes nothing
-# about the two solvers.
+# A module of its own, in nina-plugin/: a solver that takes the options an
+# imaging application passes to ASTAP, and the C# plugin that installs it in
+# ASTAP's place. It consumes the libraries above and adds nothing to them, so
+# turning it off changes nothing about the two solvers.
 option(ASTAP_NINA_INTEGRATION "Build the N.I.N.A. integration in nina-plugin/" ON)
 if (ASTAP_NINA_INTEGRATION AND EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/nina-plugin/CMakeLists.txt)
     add_subdirectory(nina-plugin)

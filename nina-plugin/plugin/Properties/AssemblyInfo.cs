@@ -5,14 +5,14 @@ using System.Runtime.InteropServices;
 // plugin's profile-specific settings, so it must not change between releases.
 [assembly: Guid("3138b765-ce6e-46f3-9036-68d229bcec15")]
 
-[assembly: AssemblyVersion("1.0.0.0")]
-[assembly: AssemblyFileVersion("1.0.0.0")]
+[assembly: AssemblyVersion("1.1.0.0")]
+[assembly: AssemblyFileVersion("1.1.0.0")]
 
 // The name. The options page finds its user interface by a DataTemplate keyed
 // "<AssemblyTitle>_Options", so this string and the key in Options.xaml have to
 // agree exactly or the options tab comes up empty.
 [assembly: AssemblyTitle("Faster ASTAP")]
-[assembly: AssemblyDescription("Plate solves against a whole-sky quad index held in memory, in place of ASTAP.")]
+[assembly: AssemblyDescription("Plate solves against a pre-built whole-sky quad index, in place of ASTAP.")]
 
 [assembly: AssemblyCompany("Vlad Pop")]
 [assembly: AssemblyProduct("Faster ASTAP")]
@@ -34,16 +34,16 @@ using System.Runtime.InteropServices;
 [assembly: AssemblyMetadata("FeaturedImageURL", "")]
 [assembly: AssemblyMetadata("ScreenshotURL", "")]
 [assembly: AssemblyMetadata("AltScreenshotURL", "")]
-[assembly: AssemblyMetadata("LongDescription", @"Plate solving without the wait for the index.
+[assembly: AssemblyMetadata("LongDescription", @"Plate solving that does not search the sky.
 
-The index solver looks an image's star quads up in a pre-built whole-sky table instead of searching the sky, which makes a solve a few milliseconds and makes it indifferent to where the telescope was pointed. The catch is that the table is gigabytes, and a solver launched afresh for every frame spends over a second reading it back before it can start.
+The index solver looks an image's star quads up in a pre-built whole-sky table instead of walking a spiral outwards from where the telescope thinks it is pointed. That makes a solve indifferent to the pointing hint, and makes a blind solve cost the same as any other.
 
-This plugin keeps that table in memory in a small background process, and points N.I.N.A.'s ASTAP setting at a program that solves through it. A warm solve, end to end and including reading the image off disk, takes about a tenth of a second.
+This plugin points N.I.N.A.'s ASTAP setting at that solver, so everything that plate solves in N.I.N.A. goes through it — including the Framing Assistant's prompt when you load an image from a file, which is a blind solve and where the difference is largest.
 
-Everything that plate solves in N.I.N.A. goes through it, including the Framing Assistant's prompt when you load an image from a file — which is a blind solve, and where the difference is largest.
+The table is gigabytes, and it is read through a memory mapping rather than copied: the parts one solve touches stay in the operating system's cache for the solves after it, so there is no background process here and nothing to warm up. It is built once per star database, which takes minutes, and the options page has a button for doing that before a session rather than during one.
 
 Requires a star database (the .1476 or .290 files ASTAP uses); an existing ASTAP installation already has one, and the plugin will find it.
 
-N.I.N.A. has no extension point for plate solvers, so this appears in the solver dropdown as ASTAP. The plugin's options page shows what is actually serving.")]
+N.I.N.A. has no extension point for plate solvers, so this appears in the solver dropdown as ASTAP. The plugin's options page shows which solver is actually in use.")]
 
 [assembly: ComVisible(false)]

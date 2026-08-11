@@ -9,25 +9,12 @@
     <DataTemplate x:Key="Faster ASTAP_Options">
         <StackPanel Margin="10" Orientation="Vertical">
 
-            <TextBlock FontWeight="Bold" Text="Index server" />
+            <TextBlock FontWeight="Bold" Text="Status" />
             <TextBlock Margin="0,4,0,0" Text="{Binding StatusSummary}" TextWrapping="Wrap" />
-            <TextBlock Margin="0,2,0,0" Text="{Binding TimingSummary}" TextWrapping="Wrap" />
             <!--  Empty when there is nothing to say, which renders as nothing. A
                   converter to collapse it would mean depending on one of
                   N.I.N.A.'s resources resolving in this scope, for no gain.  -->
             <TextBlock Margin="0,2,0,0" Text="{Binding Activity}" TextWrapping="Wrap" />
-
-            <StackPanel Margin="0,8,0,0" Orientation="Horizontal">
-                <Button Width="110"
-                        Margin="0,0,6,0"
-                        Command="{Binding StartServerCommand}"
-                        Content="Start server" />
-                <Button Width="110"
-                        Margin="0,0,6,0"
-                        Command="{Binding StopServerCommand}"
-                        Content="Stop server" />
-                <Button Width="110" Command="{Binding RefreshCommand}" Content="Refresh" />
-            </StackPanel>
 
             <CheckBox Margin="0,12,0,0"
                       Content="Use for plate solving (points N.I.N.A.'s ASTAP path at this solver)"
@@ -38,7 +25,7 @@
                        TextWrapping="Wrap" />
             <TextBlock Margin="20,2,0,0"
                        Opacity="0.7"
-                       Text="The path changes over by itself once the index is in memory, and not before — until then plate solving stays with ASTAP, so a solve never lands on a solver that is still warming up. Unticking restores the previous path."
+                       Text="N.I.N.A. runs this solver in ASTAP's place, once per plate solve, and reads the same .ini back. Unticking restores the previous path."
                        TextWrapping="Wrap" />
             <TextBlock Margin="20,2,0,0"
                        Opacity="0.7"
@@ -80,37 +67,31 @@
                            Text="0 = one per hardware thread"
                            VerticalAlignment="Center" />
             </StackPanel>
-            <TextBlock Margin="150,2,0,0"
+            <TextBlock Margin="0,8,0,0" Text="{Binding CacheSummary}" TextWrapping="Wrap" />
+            <StackPanel Margin="0,6,0,0" Orientation="Horizontal">
+                <Button Width="180"
+                        Margin="0,0,6,0"
+                        Command="{Binding PrepareCommand}"
+                        Content="Build the index now" />
+                <Button Width="110" Command="{Binding RefreshCommand}" Content="Refresh" />
+            </StackPanel>
+            <TextBlock Margin="0,2,0,0"
                        Opacity="0.7"
-                       Text="{Binding Status.Densities, StringFormat='Resident tiers: {0}'}"
+                       Text="A cached index costs nothing to read: the files are memory mapped, so the pages one solve touches stay in memory for the ones after it. Building a ladder that has never been built takes minutes, and this is how to spend them before a session rather than on the first frame of it."
                        TextWrapping="Wrap" />
 
-            <TextBlock Margin="0,16,0,0" FontWeight="Bold" Text="Lifetime" />
-            <StackPanel Margin="0,4,0,0" Orientation="Horizontal">
-                <TextBlock Width="150" Text="Stop when idle after" VerticalAlignment="Center" />
-                <TextBox Width="80" Text="{Binding IdleExitMinutes, UpdateSourceTrigger=LostFocus}" />
-                <TextBlock Margin="8,0,0,0"
-                           Opacity="0.7"
-                           Text="minutes — 0 keeps it up, which is what you want while imaging"
-                           VerticalAlignment="Center" />
-            </StackPanel>
-            <CheckBox Margin="0,6,0,0"
-                      Content="Read the index into memory when N.I.N.A. starts"
-                      IsChecked="{Binding StartWithNina}" />
-            <TextBlock Margin="20,2,0,0"
-                       Opacity="0.7"
-                       Text="Warming up during startup costs nothing; warming up on the first solve of the night makes something wait."
+            <TextBlock Margin="0,16,0,0" FontWeight="Bold" Text="Last solves" />
+            <TextBlock Margin="0,4,0,0"
+                       FontFamily="Consolas"
+                       Opacity="0.8"
+                       Text="{Binding RecentLog}"
                        TextWrapping="Wrap" />
-            <CheckBox Margin="0,6,0,0"
-                      Content="Stop the server when N.I.N.A. closes"
-                      IsChecked="{Binding StopServerOnExit}" />
-            <TextBlock Margin="20,2,0,0"
+            <TextBlock Margin="0,2,0,0"
                        Opacity="0.7"
-                       Text="The server also exits by itself if N.I.N.A. goes away without asking it to — a crash releases the memory just the same."
+                       Text="{Binding LogPath, StringFormat='From {0}, which is where the solver reports: N.I.N.A. runs it with no console to print to.'}"
                        TextWrapping="Wrap" />
 
             <TextBlock Margin="0,16,0,0" FontWeight="Bold" Text="Removing it" />
-            <TextBlock Margin="0,4,0,0" Text="{Binding CacheSummary}" TextWrapping="Wrap" />
             <CheckBox Margin="0,6,0,0"
                       Content="Delete the index cache when the plugin is uninstalled"
                       IsChecked="{Binding RemoveCacheOnUninstall}" />

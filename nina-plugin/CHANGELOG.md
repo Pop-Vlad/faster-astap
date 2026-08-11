@@ -1,5 +1,16 @@
 # Changelog
 
+## 1.1.0.0
+
+- The resident index server is gone. The index cache is memory mapped, so the rungs a solve touches stay in the
+  operating system's page cache and the next solve finds them there — a process holding them saved 30 ms and cost a
+  second process holding gigabytes. N.I.N.A. now launches `astap_nina_solve.exe` per solve and nothing else runs.
+- **Build the index now** on the options page builds a ladder that has never been built, which is the one operation
+  here that takes minutes, at a moment of your choosing rather than on the first frame of a session.
+- The options page reports what the solver last wrote, in place of what a server was holding.
+- Installing over the previous version stops a leftover `astap_index_server.exe`, removes it, and takes an ASTAP path
+  that was pointed at it back to the real ASTAP.
+
 ## 1.0.0.0
 
 First release.

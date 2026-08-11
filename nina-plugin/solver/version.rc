@@ -28,11 +28,11 @@ BEGIN
         BLOCK "040904B0" /* US English, Unicode */
         BEGIN
             VALUE "CompanyName",      "faster-astap"
-            VALUE "FileDescription",  "ASTAP compatible plate solver, resident quad index"
+            VALUE "FileDescription",  "ASTAP compatible plate solver, whole-sky quad index"
             VALUE "FileVersion",      "1.0.0.0"
-            VALUE "InternalName",     "astap_index_server"
+            VALUE "InternalName",     "astap_nina_solve"
             VALUE "LegalCopyright",   "Algorithm (C) 2018-2026 Han Kleijn. MPL 2.0."
-            VALUE "OriginalFilename", "astap_index_server.exe"
+            VALUE "OriginalFilename", "astap_nina_solve.exe"
             VALUE "ProductName",      "faster-astap index solver"
             VALUE "ProductVersion",   "1.0.0.0"
         END

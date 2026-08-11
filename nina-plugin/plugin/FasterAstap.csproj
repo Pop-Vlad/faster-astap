@@ -34,14 +34,14 @@
        ASTAP setting at this copy, so it has to travel with the plugin: the
        whole thing then installs and uninstalls as one directory. -->
   <PropertyGroup>
-    <IndexServerExe>$(MSBuildThisFileDirectory)..\..\build\nina-plugin\astap_index_server.exe</IndexServerExe>
+    <SolverExe>$(MSBuildThisFileDirectory)..\..\build\nina-plugin\astap_nina_solve.exe</SolverExe>
   </PropertyGroup>
 
-  <Target Name="CopyIndexServer" BeforeTargets="Build">
-    <Warning Condition="!Exists('$(IndexServerExe)')"
-             Text="astap_index_server.exe was not found at $(IndexServerExe). Build the CMake project first, or the plugin will have no solver to point at." />
-    <Copy Condition="Exists('$(IndexServerExe)')"
-          SourceFiles="$(IndexServerExe)"
+  <Target Name="CopySolver" BeforeTargets="Build">
+    <Warning Condition="!Exists('$(SolverExe)')"
+             Text="astap_nina_solve.exe was not found at $(SolverExe). Build the CMake project first, or the plugin will have no solver to point at." />
+    <Copy Condition="Exists('$(SolverExe)')"
+          SourceFiles="$(SolverExe)"
           DestinationFolder="$(OutDir)"
           SkipUnchangedFiles="true" />
   </Target>

@@ -8,7 +8,7 @@
     the build output there, or takes it away again.
 
     Four files travel together — FasterAstap.dll, its .pdb and .deps.json, and
-    astap_index_server.exe — because the plugin points N.I.N.A.'s ASTAP setting
+    astap_nina_solve.exe — because the plugin points N.I.N.A.'s ASTAP setting
     at the executable sitting beside its own assembly.
 
     Nothing is written outside %localappdata% and no administrator rights are
@@ -42,8 +42,9 @@
     no data, only the minutes to rebuild.
 
 .PARAMETER Force
-    Kill a still-running astap_index_server that ignored the request to stop.
-    Never applied to N.I.N.A. itself.
+    Kill a still-running astap_index_server — the resident server earlier
+    versions shipped, which this installs over — if it ignores the request to
+    stop. Never applied to N.I.N.A. itself.
 
 .EXAMPLE
     .\install.ps1
@@ -74,8 +75,13 @@ $ErrorActionPreference = 'Stop'
 # The plugin assembly, the runtime it needs to be resolved against, and the
 # solver it points N.I.N.A. at. The .pdb is optional: a Release build without
 # symbols is still a working plugin, only a worse crash report.
-$RequiredFiles = @('FasterAstap.dll', 'FasterAstap.deps.json', 'astap_index_server.exe')
+$RequiredFiles = @('FasterAstap.dll', 'FasterAstap.deps.json', 'astap_nina_solve.exe')
 $OptionalFiles = @('FasterAstap.pdb')
+
+# Shipped by the versions that kept the index in a resident server, and removed
+# by an update rather than left behind: nothing launches it any more, and a copy
+# of it left running holds gigabytes.
+$LegacyFiles = @('astap_index_server.exe')
 
 function Resolve-SourceFolder {
     if ($Source) {
@@ -111,10 +117,11 @@ function Assert-NinaClosed {
     }
 }
 
-# A server left over from a previous session — or from a N.I.N.A. that crashed
-# before its teardown ran — keeps astap_index_server.exe locked and gigabytes
-# resident. Ask it to stop the way the plugin would.
-function Stop-IndexServer {
+# The resident server of an earlier version, still running: from this session's
+# N.I.N.A., or from one that crashed before its teardown ran. It keeps
+# astap_index_server.exe locked and gigabytes resident, and nothing installed
+# here will ever talk to it again. Ask it to stop the way that plugin would.
+function Stop-LegacyServer {
     param([string[]] $ExeCandidates)
 
     if (@(Get-Process -Name 'astap_index_server' -ErrorAction SilentlyContinue).Count -eq 0) {
@@ -190,10 +197,7 @@ own output, so the CMake build has to come first.
     }
 
     Assert-NinaClosed
-    Stop-IndexServer -ExeCandidates @(
-        (Join-Path $dst 'astap_index_server.exe'),
-        (Join-Path $src 'astap_index_server.exe')
-    )
+    Stop-LegacyServer -ExeCandidates @((Join-Path $dst 'astap_index_server.exe'))
 
     if (-not $existing) {
         if ($PSCmdlet.ShouldProcess($dst, 'Create plugin folder')) {
@@ -210,6 +214,15 @@ own output, so the CMake build has to come first.
             $copied++
         }
         Write-Host (("  {0,-28} {1}" -f $name, (Get-FileVersionString $from)).TrimEnd())
+    }
+
+    foreach ($name in $LegacyFiles) {
+        $stale = Join-Path $dst $name
+        if (-not (Test-Path -LiteralPath $stale -PathType Leaf)) { continue }
+        if ($PSCmdlet.ShouldProcess($stale, 'Remove file from the previous design')) {
+            Remove-Item -LiteralPath $stale -Force
+            Write-Host ("  {0,-28} removed, no longer part of the plugin" -f $name)
+        }
     }
 
     Write-Host ''
@@ -236,7 +249,7 @@ function Invoke-Uninstall {
     } else {
         Write-Host "Removing $dst"
         Assert-NinaClosed
-        Stop-IndexServer -ExeCandidates @((Join-Path $dst 'astap_index_server.exe'))
+        Stop-LegacyServer -ExeCandidates @((Join-Path $dst 'astap_index_server.exe'))
         if ($PSCmdlet.ShouldProcess($dst, 'Remove plugin folder')) {
             Remove-Item -LiteralPath $dst -Recurse -Force
             Write-Host '  removed'

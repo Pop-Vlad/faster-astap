@@ -58,7 +58,7 @@ sdist.exclude = [
 
 [tool.scikit-build.cmake.define]
 ASTAP_PYTHON = "ON"
-# The two command line solvers and the N.I.N.A. server are not part of the
+# The two command line solvers and the N.I.N.A. front end are not part of the
 # wheel, and building them would only slow it down.
 ASTAP_NINA_INTEGRATION = "OFF"
 # That option exists so the shipped .exe files carry their own runtime. An
