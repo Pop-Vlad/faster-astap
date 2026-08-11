@@ -77,22 +77,9 @@ ASTAP_NINA_INTEGRATION = "OFF"
 # decides the runtime here, so the wheel takes it dynamically like everything
 # else in the process.
 ASTAP_STATIC_RUNTIME = "OFF"
-# The optional image decoders are left out of the wheel deliberately, all of
-# them, on every platform.
-#
-# Left to auto-detection CMake links whatever the build machine happens to have,
-# which is not the same thing on each: the macOS runners have Homebrew's libpng,
-# libjpeg and libtiff, the manylinux images have zlib, and the Windows ones have
-# none. That would ship wheels whose supported_image_extensions() differs by
-# platform - a file that opens on a Mac and not on Windows - and it would vendor
-# those libraries into the wheel, which is what delocate refused: Homebrew builds
-# for the runner's own macOS, far newer than a wheel may target.
-#
-# FITS, Rice .fz, Netpbm and BMP need nothing beyond the compiler and stay in
-# C++. The formats these switches turn off are read by Pillow and rawpy instead,
-# which ship their own wheels on every platform this builds for - see
-# faster_astap/_imageio.py, where the ownership is fixed rather than detected.
-ASTAP_ZLIB = "OFF"
+# zlib is on because the wheel uses it.
+ASTAP_ZLIB = "ON"
+# The other four are off because PNG, JPEG, TIFF and the raw formats are dispatched to Pillow and rawpy.
 ASTAP_PNG = "OFF"
 ASTAP_JPEG = "OFF"
 ASTAP_TIFF = "OFF"
@@ -106,6 +93,9 @@ ASTAP_LIBRAW = "OFF"
 # 32 bit is not worth supporting for a solver that maps multi-gigabyte index
 # files, and musl and PyPy cost build time for very few users of this.
 skip = ["pp*", "*-win32", "*_i686", "*-musllinux_*"]
+
+# A published wheel must never quietly lose a decoder it was configured to have.
+environment = { CMAKE_ARGS = "-DASTAP_REQUIRE_LIBS=ON" }
 
 # Proves the wheel imports on a machine with none of the build tools on it. It
 # cannot prove solving: that needs a star database, which is gigabytes and not
@@ -121,7 +111,15 @@ test-command = "python -c \"import faster_astap as fa; print(fa.__version__, fa.
 # not run; that is the trade for still shipping one at all.
 archs = ["arm64", "x86_64"]
 
+[tool.cibuildwheel.windows]
+#  Windows wheels require isntalling zlib before the build.
+before-all = "vcpkg install zlib:x64-windows-static-md"
+environment = { CMAKE_ARGS = "-DASTAP_REQUIRE_LIBS=ON -DVCPKG_TARGET_TRIPLET=x64-windows-static-md -DCMAKE_TOOLCHAIN_FILE=$VCPKG_INSTALLATION_ROOT/scripts/buildsystems/vcpkg.cmake" }
+
 [tool.cibuildwheel.linux]
+# The manylinux images ship zlib-devel already. Asked for anyway.
+before-all = "yum install -y zlib-devel"
+
 # GCC 12: comfortable with C++17, and new enough for std::filesystem without the
 # separate library the older images want.
 manylinux-x86_64-image = "manylinux_2_28"

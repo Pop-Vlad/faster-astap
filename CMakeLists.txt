@@ -76,6 +76,9 @@ option(ASTAP_JPEG "Read JPEG images when libjpeg is available" ON)
 option(ASTAP_TIFF "Read TIFF images when libtiff is available" ON)
 option(ASTAP_LIBRAW "Read raw camera images when LibRaw is available" ON)
 
+# Require zlib for a published wheel
+option(ASTAP_REQUIRE_LIBS "Fail the build when a switched-on image library is missing" OFF)
+
 add_library(astap_image
         src/image/image_io.cpp
         src/image/fits.cpp
@@ -136,6 +139,10 @@ macro(astap_image_library pkg_module find_name imported_target define)
     if (_astap_done)
         target_compile_definitions(astap_image PRIVATE ${define})
         list(APPEND ASTAP_IMAGE_FORMATS ${ARGN})
+    elseif (ASTAP_REQUIRE_LIBS)
+        message(FATAL_ERROR
+                "ASTAP_REQUIRE_LIBS is on and ${pkg_module} was not found, so this build "
+                "would silently drop: ${ARGN}. Install the library, or turn that format off.")
     endif ()
 endmacro()
 
@@ -197,6 +204,10 @@ if (ASTAP_LIBRAW)
     if (_astap_done)
         target_compile_definitions(astap_image PRIVATE ASTAP_WITH_LIBRAW)
         list(APPEND ASTAP_IMAGE_FORMATS "raw camera files")
+    elseif (ASTAP_REQUIRE_LIBS)
+        message(FATAL_ERROR
+                "ASTAP_REQUIRE_LIBS is on and LibRaw was not found, so this build would "
+                "silently drop the raw camera formats. Install it, or set ASTAP_LIBRAW=OFF.")
     endif ()
 endif ()
 
