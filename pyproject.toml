@@ -7,7 +7,7 @@ build-backend = "scikit_build_core.build"
 name = "faster-astap"
 # One version for the whole repository (GitHub releases and PyPI releases)
 # The .devN suffix is for proving the release pipeline out on TestPyPI.
-version = "0.5.0.dev1"
+version = "0.5.0"
 description = "Fast astrometric plate solving: ASTAP's algorithm in C++, and an optimized whole-sky index solver"
 readme = "README.md"
 requires-python = ">=3.9"
