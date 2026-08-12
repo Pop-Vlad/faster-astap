@@ -81,9 +81,8 @@ ASTAP_LIBRAW = "OFF"
 # build a maintainer runs locally with `cibuildwheel` is the one CI runs, and so
 # an upgrade of the action cannot silently change what is built.
 #
-# 32 bit is not worth supporting for a solver that maps multi-gigabyte index
-# files, and musl and PyPy cost build time for very few users of this.
-skip = ["pp*", "*-win32", "*_i686", "*-musllinux_*"]
+# cp*t-* is no longer supported because rawpy became a dependency and publishes no wheel for it.
+skip = ["pp*", "*-win32", "*_i686", "*-musllinux_*", "cp*t-*"]
 
 # A published wheel must never quietly lose a decoder it was configured to have.
 environment = { CMAKE_ARGS = "-DASTAP_REQUIRE_LIBS=ON" }
@@ -95,12 +94,8 @@ test-requires = "pytest"
 test-command = "python -c \"import faster_astap as fa; print(fa.__version__, fa.supported_image_extensions())\" && python -m pytest {project}/python/tests -q"
 
 [tool.cibuildwheel.macos]
-# Both architectures from the one arm64 runner. macos-13 was the last free Intel
-# runner and has been retired - Intel is now only on the paid -large labels - so
-# the x86_64 wheel is cross compiled here instead. cibuildwheel skips the test
-# step for a wheel the runner cannot execute, so the Intel build is compiled and
-# not run; that is the trade for still shipping one at all.
-archs = ["arm64", "x86_64"]
+# MacOS arm64 only. The x86_64 wheel is no longer supported because rawpy became a dependency.
+archs = ["arm64"]
 
 [tool.cibuildwheel.windows]
 #  Windows wheels require isntalling zlib before the build.

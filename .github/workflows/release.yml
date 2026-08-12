@@ -26,13 +26,6 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      # std::filesystem needs macOS 10.15, and the default for an x86_64 build is older than that.
-      # The arm64 half is raised to its own floor of 11.0 automatically.
-      # Naming 10.15 here only affects Intel.
-      - name: Set the macOS deployment target
-        if: runner.os == 'macOS'
-        run: echo "MACOSX_DEPLOYMENT_TARGET=10.15" >> "$GITHUB_ENV"
-
       # Everything it builds and how it tests is in [tool.cibuildwheel] in pyproject.toml.
       # This stays a plain invocation.
       - uses: pypa/cibuildwheel@v4.1
